@@ -124,8 +124,12 @@ def process_website(request: WebsiteRequest):
         
         # Reinitialize the global retriever after adding new data
         global global_retriever
-        global_retriever = get_vector_store_retriever(k=5)
-        logger.info("Global retriever reinitialized after adding new data")
+        try:
+            global_retriever = get_vector_store_retriever(k=5)
+            logger.info("Global retriever reinitialized after adding new data")
+        except Exception as e:
+            logger.error(f"Error reinitializing retriever: {str(e)}")
+            # Continue even if retriever reinitialization fails
         
         return {
             "message": f"Successfully processed website {request.url}",

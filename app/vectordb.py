@@ -139,12 +139,11 @@ def get_vector_store_retriever(k: int = 5):
             embedding=embedder
         )
         
-        # Configure retriever to return similarity scores and fetch k documents
+        # Configure retriever to fetch k documents
         retriever = vector_store.as_retriever(
             search_type="similarity",  # Use similarity search
             search_kwargs={
-                "k": k,                # Number of documents to retrieve
-                "include_metadata": True  # Include metadata in results
+                "k": k                # Number of documents to retrieve
             }
         )
         
