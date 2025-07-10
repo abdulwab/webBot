@@ -5,7 +5,12 @@ from app.embedder import get_embedding_model
 from app.vectordb import create_vector_store, get_vector_store_retriever
 from app.chatbot import generate_answer
 
-app = FastAPI()
+app = FastAPI(
+    title="Ecom AI Agent",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url=None,
+)
 
 # Global retriever cache
 retriever = None
