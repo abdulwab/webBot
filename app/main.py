@@ -3,6 +3,7 @@ import time
 import os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 
@@ -24,6 +25,28 @@ app = FastAPI(
     description="API for a chatbot that can answer questions about websites using RAG",
     version="1.0.0",
     docs_url="/docs"
+)
+
+# Add CORS middleware
+origins = [
+    "https://rag-forntend.vercel.app",   # The specific frontend URL with typo
+    "https://rag-frontend.vercel.app",    # Corrected URL (in case it's fixed later)
+    "http://localhost:3000",             # For local development
+    "https://localhost:3000",            # For local development with HTTPS
+    "http://127.0.0.1:3000",            # Alternative local development
+    "https://127.0.0.1:3000",           # Alternative local development with HTTPS
+    # Add any other frontend domains here
+]
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",  # Allow all Vercel app subdomains
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],  # Allow all headers for simplicity
+    max_age=86400,  # Cache preflight requests for 24 hours
 )
 
 # Initialize Pinecone at startup
