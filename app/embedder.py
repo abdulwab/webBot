@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 
 # Get environment variables
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-TARGET_DIMENSIONS = 1536  # Dimensions for OpenAI embeddings
+TARGET_DIMENSIONS = 1024  # Match the Pinecone index dimension
 
 class CustomOpenAIEmbeddings(Embeddings):
-    """Custom wrapper for OpenAI embeddings."""
+    """Custom wrapper for OpenAI embeddings that resizes to match Pinecone dimensions."""
     
     def __init__(self):
         """Initialize the embeddings model."""
@@ -42,9 +42,29 @@ class CustomOpenAIEmbeddings(Embeddings):
             except Exception as e2:
                 logger.error(f"Failed to initialize alternative model: {str(e2)}")
                 raise ValueError(f"Could not initialize any embedding model: {str(e)}, then {str(e2)}")
+    
+    def _resize_embedding(self, embedding: List[float], target_dim: int = TARGET_DIMENSIONS) -> List[float]:
+        """Resize embedding to target dimensions."""
+        if len(embedding) == target_dim:
+            return embedding
+            
+        logger.info(f"Resizing embedding from {len(embedding)} to {target_dim} dimensions")
+        
+        # Convert to numpy for easier manipulation
+        emb_array = np.array(embedding)
+        
+        if len(embedding) > target_dim:
+            # If original is larger, use dimensionality reduction
+            # Take evenly spaced elements to reduce dimensions
+            indices = np.round(np.linspace(0, len(embedding) - 1, target_dim)).astype(int)
+            resized = emb_array[indices].tolist()
+            return resized
+        else:
+            # If original is smaller (unlikely), pad with zeros
+            return embedding + [0.0] * (target_dim - len(embedding))
         
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for a list of documents.
+        """Generate embeddings for a list of documents and resize to target dimensions.
         
         Args:
             texts: List of text strings to embed
@@ -55,14 +75,18 @@ class CustomOpenAIEmbeddings(Embeddings):
         try:
             logger.info(f"Generating embeddings for {len(texts)} texts")
             embeddings = self.embeddings_model.embed_documents(texts)
-            logger.info(f"Successfully generated embeddings with dimensions: {len(embeddings[0])}")
-            return embeddings
+            
+            # Resize embeddings to match Pinecone dimensions
+            resized_embeddings = [self._resize_embedding(emb) for emb in embeddings]
+            
+            logger.info(f"Successfully generated and resized embeddings to {TARGET_DIMENSIONS} dimensions")
+            return resized_embeddings
         except Exception as e:
             logger.error(f"Error generating embeddings: {str(e)}")
             raise
     
     def embed_query(self, text: str) -> List[float]:
-        """Generate embeddings for a query.
+        """Generate embeddings for a query and resize to target dimensions.
         
         Args:
             text: Query text to embed
@@ -73,8 +97,12 @@ class CustomOpenAIEmbeddings(Embeddings):
         try:
             logger.info(f"Generating embedding for query: '{text[:50]}...'")
             embedding = self.embeddings_model.embed_query(text)
-            logger.info(f"Successfully generated query embedding with dimensions: {len(embedding)}")
-            return embedding
+            
+            # Resize embedding to match Pinecone dimensions
+            resized_embedding = self._resize_embedding(embedding)
+            
+            logger.info(f"Successfully generated and resized query embedding to {TARGET_DIMENSIONS} dimensions")
+            return resized_embedding
         except Exception as e:
             logger.error(f"Error generating query embedding: {str(e)}")
             raise

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 PINECONE_ENVIRONMENT = os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter")
 PINECONE_INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "webbot-index")
-PINECONE_DIMENSION = 1536  # OpenAI embeddings dimension
+PINECONE_DIMENSION = 1024  # Match the existing Pinecone index dimension
 
 # Flag to track if Pinecone has been initialized
 pinecone_initialized = False
