@@ -18,10 +18,11 @@ PINECONE_DIMENSION = 1536  # OpenAI embeddings dimension
 
 # Flag to track if Pinecone has been initialized
 pinecone_initialized = False
+pinecone_client = None
 
 def init_pinecone():
     """Initialize Pinecone client."""
-    global pinecone_initialized
+    global pinecone_initialized, pinecone_client
     
     if pinecone_initialized:
         logger.info("Pinecone already initialized, skipping initialization")
@@ -31,23 +32,50 @@ def init_pinecone():
         if not PINECONE_API_KEY:
             raise ValueError("PINECONE_API_KEY environment variable is not set")
             
-        # Initialize Pinecone client
+        # Initialize Pinecone client - handle both old and new API
         logger.info(f"Initializing Pinecone with environment: {PINECONE_ENVIRONMENT}")
-        pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
         
-        # Check if index exists, create if it doesn't
-        existing_indexes = pinecone.list_indexes()
+        # Check which Pinecone client version we're using
+        import inspect
+        pinecone_init_params = inspect.signature(pinecone.init).parameters
         
-        if PINECONE_INDEX_NAME not in existing_indexes:
-            logger.info(f"Creating new Pinecone index: {PINECONE_INDEX_NAME}")
-            pinecone.create_index(
-                name=PINECONE_INDEX_NAME,
-                dimension=PINECONE_DIMENSION,
-                metric="cosine"
-            )
-            logger.info(f"Successfully created Pinecone index: {PINECONE_INDEX_NAME}")
+        if 'environment' in pinecone_init_params:
+            # Old API (pinecone-client < 3.0.0)
+            logger.info("Using legacy Pinecone initialization")
+            pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
+            
+            # Check if index exists, create if it doesn't
+            existing_indexes = pinecone.list_indexes()
+            
+            if PINECONE_INDEX_NAME not in existing_indexes:
+                logger.info(f"Creating new Pinecone index: {PINECONE_INDEX_NAME}")
+                pinecone.create_index(
+                    name=PINECONE_INDEX_NAME,
+                    dimension=PINECONE_DIMENSION,
+                    metric="cosine"
+                )
+                logger.info(f"Successfully created Pinecone index: {PINECONE_INDEX_NAME}")
+            else:
+                logger.info(f"Pinecone index {PINECONE_INDEX_NAME} already exists")
         else:
-            logger.info(f"Pinecone index {PINECONE_INDEX_NAME} already exists")
+            # New API (pinecone-client >= 3.0.0)
+            logger.info("Using new Pinecone initialization")
+            pinecone_client = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+            
+            # Check if index exists, create if it doesn't
+            indexes = pinecone_client.list_indexes()
+            index_names = [idx.name for idx in indexes]
+            
+            if PINECONE_INDEX_NAME not in index_names:
+                logger.info(f"Creating new Pinecone index: {PINECONE_INDEX_NAME}")
+                pinecone_client.create_index(
+                    name=PINECONE_INDEX_NAME,
+                    dimension=PINECONE_DIMENSION,
+                    metric="cosine"
+                )
+                logger.info(f"Successfully created Pinecone index: {PINECONE_INDEX_NAME}")
+            else:
+                logger.info(f"Pinecone index {PINECONE_INDEX_NAME} already exists")
             
         pinecone_initialized = True
         logger.info("Pinecone initialized successfully")

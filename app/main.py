@@ -27,16 +27,21 @@ app = FastAPI(
 )
 
 # Initialize Pinecone at startup
-init_pinecone()
-
-# Initialize retriever at startup
 global_retriever = None
 try:
-    global_retriever = get_vector_store_retriever(k=5)
-    logger.info("Global retriever initialized successfully at startup")
+    logger.info("Initializing Pinecone at startup")
+    init_pinecone()
+    
+    # Try to initialize the global retriever
+    try:
+        global_retriever = get_vector_store_retriever(k=5)
+        logger.info("Global retriever initialized successfully at startup")
+    except Exception as e:
+        logger.warning(f"Could not initialize retriever at startup: {str(e)}")
+        logger.info("Will try to initialize retriever on first query")
 except Exception as e:
-    logger.error(f"Error initializing global retriever at startup: {str(e)}")
-    # We'll continue and try to initialize it later if needed
+    logger.error(f"Error initializing Pinecone at startup: {str(e)}")
+    logger.info("Will try to initialize Pinecone again when needed")
 
 # Define request and response models
 class WebsiteRequest(BaseModel):
@@ -76,6 +81,16 @@ def process_website(request: WebsiteRequest):
     try:
         start_time = time.time()
         logger.info(f"Processing website: {request.url}")
+        
+        # Ensure Pinecone is initialized
+        try:
+            init_pinecone()
+        except Exception as e:
+            logger.error(f"Failed to initialize Pinecone: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to initialize vector database: {str(e)}"
+            )
         
         # Step 1: Scrape website content
         scraped_pages = scrape_website(
@@ -134,13 +149,15 @@ def query_website(request: QueryRequest):
         if global_retriever is None:
             # Try to initialize it now
             try:
+                # Ensure Pinecone is initialized first
+                init_pinecone()
                 global_retriever = get_vector_store_retriever(k=5)
                 logger.info("Global retriever initialized on first query")
             except Exception as e:
                 logger.error(f"Error initializing retriever: {str(e)}")
                 raise HTTPException(
                     status_code=400, 
-                    detail="No website has been processed yet. Please process a website first."
+                    detail="No website has been processed yet or vector database is not available. Please process a website first."
                 )
         
         # Generate answer using the global retriever

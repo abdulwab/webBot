@@ -23,11 +23,25 @@ class CustomOpenAIEmbeddings(Embeddings):
         if not OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY environment variable is not set")
             
-        self.embeddings_model = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            openai_api_key=OPENAI_API_KEY
-        )
-        logger.info("Initialized OpenAI embeddings model")
+        try:
+            self.embeddings_model = OpenAIEmbeddings(
+                model="text-embedding-3-small",
+                openai_api_key=OPENAI_API_KEY
+            )
+            logger.info("Initialized OpenAI embeddings model")
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI embeddings model: {str(e)}")
+            # Try with a different model if the first one fails
+            try:
+                logger.info("Trying with text-embedding-ada-002 model")
+                self.embeddings_model = OpenAIEmbeddings(
+                    model="text-embedding-ada-002",
+                    openai_api_key=OPENAI_API_KEY
+                )
+                logger.info("Initialized OpenAI embeddings model with ada-002")
+            except Exception as e2:
+                logger.error(f"Failed to initialize alternative model: {str(e2)}")
+                raise ValueError(f"Could not initialize any embedding model: {str(e)}, then {str(e2)}")
         
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for a list of documents.
