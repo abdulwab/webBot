@@ -7,6 +7,9 @@ from app.chatbot import generate_answer
 import traceback
 import logging
 from pydantic import BaseModel, HttpUrl
+import hashlib
+import os
+from typing import Dict, Set, Optional
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -23,20 +26,29 @@ app = FastAPI(
 # Global retriever cache
 retriever = None
 
+# URL processing cache
+# This dictionary will store URLs that have already been processed
+processed_urls: Dict[str, int] = {}
+
 # Pydantic models for request validation
 class InitRequest(BaseModel):
     url: HttpUrl
+    force_refresh: bool = False  # Optional parameter to force reprocessing
+
+class InitResponse(BaseModel):
+    status: str
+    chunks: int
+    cached: bool = False  # Indicates if the response came from cache
 
 class ChatRequest(BaseModel):
     query: str
 
 class ChatResponse(BaseModel):
-    response: str
+    answer: str
 
-class InitResponse(BaseModel):
-    status: str
-    chunks: int
-
+def get_url_hash(url: str) -> str:
+    """Create a hash of the URL to use as a unique identifier."""
+    return hashlib.md5(url.encode()).hexdigest()
 
 @app.get("/")
 async def root():
@@ -45,79 +57,101 @@ async def root():
 
 @app.post("/init", response_model=InitResponse)
 async def initialize_from_url(request: InitRequest):
+    global retriever
+    
     try:
         url = str(request.url)
+        url_hash = get_url_hash(url)
         
-        logger.info(f"Scraping URL: {url}")
-        try:
-            text = scrape_url(url)
-            if not text or len(text) < 10:  # Basic validation for scraped content
-                logger.error(f"Failed to scrape content from URL: {url}")
-                raise HTTPException(status_code=400, detail="Failed to scrape content from URL or content too short")
-        except Exception as e:
-            logger.error(f"Error scraping URL {url}: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error scraping URL: {str(e)}")
+        # Check if URL has already been processed and force_refresh is False
+        if url_hash in processed_urls and not request.force_refresh:
+            logger.info(f"URL {url} has already been processed. Using cached retriever.")
+            # If we already have a retriever, use it
+            if retriever:
+                return InitResponse(
+                    status="initialized", 
+                    chunks=processed_urls[url_hash],
+                    cached=True
+                )
+            else:
+                # If the URL was processed but retriever is None (e.g., after server restart)
+                # Get the retriever from the existing vector store
+                logger.info("Retriever not in memory. Retrieving from vector store.")
+                retriever = get_vector_store_retriever()
+                return InitResponse(
+                    status="initialized", 
+                    chunks=processed_urls[url_hash],
+                    cached=True
+                )
         
-        logger.info(f"Chunking text of length {len(text)}")
-        try:
-            docs = chunk_text(text)
-            if not docs:
-                logger.error("Chunking resulted in no documents")
-                raise HTTPException(status_code=500, detail="Chunking resulted in no documents")
-        except Exception as e:
-            logger.error(f"Error chunking text: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error chunking text: {str(e)}")
+        # If URL is new or force_refresh is True, process it
+        logger.info(f"Processing URL: {url}")
         
-        logger.info(f"Creating vector store with {len(docs)} documents")
-        try:
-            vectordb = create_vector_store(docs)
-            global retriever
-            retriever = get_vector_store_retriever()
-        except Exception as e:
-            logger.error(f"Error creating vector store: {str(e)}\n{traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"Error creating vector store: {str(e)}")
+        # Scrape content from URL
+        content = scrape_url(url)
+        if not content:
+            logger.error(f"Failed to scrape content from URL: {url}")
+            raise HTTPException(status_code=400, detail=f"Failed to scrape content from URL: {url}")
         
-        logger.info("Successfully initialized retriever")
-        return {"status": "initialized", "chunks": len(docs)}
+        # Create chunks from content
+        chunks = chunk_text(content)
+        if not chunks:
+            logger.error("No chunks created from content")
+            raise HTTPException(status_code=400, detail="No chunks created from content")
+        
+        # Create vector store
+        vector_store = create_vector_store(chunks)
+        if not vector_store:
+            logger.error("Failed to create vector store")
+            raise HTTPException(status_code=500, detail="Failed to create vector store")
+        
+        # Get retriever
+        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+        
+        # Update the processed URLs cache
+        processed_urls[url_hash] = len(chunks)
+        
+        return InitResponse(
+            status="initialized", 
+            chunks=len(chunks),
+            cached=False
+        )
     
-    except HTTPException:
-        raise
     except Exception as e:
-        error_details = traceback.format_exc()
-        logger.error(f"Unexpected error in /init: {str(e)}\n{error_details}")
-        raise HTTPException(status_code=500, detail=f"Initialization failed: {str(e)}")
+        logger.error(f"Error initializing from URL: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error creating vector store: {str(e)}")
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    global retriever
+    
     try:
-        query = request.query
-        
-        if not query:
-            logger.error("Query parameter is missing")
-            raise HTTPException(status_code=400, detail="Query parameter is required")
-
         if not retriever:
-            logger.error("Retriever not initialized")
+            logger.error("Retriever not initialized. Call /init endpoint first.")
             raise HTTPException(
                 status_code=400, 
-                detail="Retriever not initialized. Call /init first with a URL."
+                detail="Chatbot not initialized. Please call /init endpoint with a URL first."
             )
         
-        logger.info(f"Generating answer for query: {query}")
-        try:
-            answer = generate_answer(query, retriever)
-            return {"response": answer}
-        except Exception as e:
-            logger.error(f"Error generating answer: {str(e)}\n{traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"Error generating answer: {str(e)}")
-            
-    except HTTPException:
-        raise
+        query = request.query
+        if not query:
+            logger.error("Empty query provided")
+            raise HTTPException(status_code=400, detail="Query cannot be empty")
+        
+        # Generate answer
+        answer = generate_answer(query, retriever)
+        if not answer:
+            logger.error("Failed to generate answer")
+            raise HTTPException(status_code=500, detail="Failed to generate answer")
+        
+        return ChatResponse(answer=answer)
+    
     except Exception as e:
-        error_details = traceback.format_exc()
-        logger.error(f"Unexpected error in /chat: {str(e)}\n{error_details}")
-        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+        logger.error(f"Error generating answer: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error generating answer: {str(e)}")
 
 
 # 👇 Needed for Railway local testing
