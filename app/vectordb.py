@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from langchain.vectorstores import Pinecone as LangchainPinecone
-from app.embedder import get_embedding_model, CustomOpenAIEmbeddings
+from app.embedder import get_embedding_model, SimpleOpenAIEmbeddings
 from langchain.schema import Document
 from pinecone import Pinecone
 import logging
