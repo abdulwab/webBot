@@ -45,8 +45,9 @@ def get_embedding_model():
             raise ValueError("OPENAI_API_KEY environment variable is not set")
         
         return OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            openai_api_key=openai_api_key
+            model="text-embedding-ada-002",  # Using older model for better compatibility
+            openai_api_key=openai_api_key,
+            client=None  # Let LangChain create the client with default settings
         )
     except Exception as e:
         logger.error(f"Failed to initialize embedding model: {str(e)}")
@@ -73,7 +74,7 @@ def create_vector_store(documents: list[Document]):
                 index_list = pc.list_indexes()
                 if PINECONE_INDEX_NAME not in index_list.names():
                     logger.info(f"Index {PINECONE_INDEX_NAME} does not exist. Creating...")
-                    # OpenAI text-embedding-3-small has 1536 dimensions
+                    # OpenAI text-embedding-ada-002 has 1536 dimensions
                     pc.create_index(name=PINECONE_INDEX_NAME, dimension=1536, metric="cosine")
                     logger.info(f"Waiting for index {PINECONE_INDEX_NAME} to be ready...")
                     time.sleep(10)  # Wait for index to be ready
