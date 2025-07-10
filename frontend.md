@@ -329,17 +329,27 @@ To add user authentication:
 
 ### Common Issues and Solutions
 
-1. **API Connection Errors**
+1. **CORS Issues**
+   - The API has CORS enabled for specific origins including:
+     - https://rag-forntend.vercel.app
+     - https://rag-frontend.vercel.app
+     - http://localhost:3000
+     - All Vercel app domains (via regex pattern)
+   - If you're getting CORS errors, ensure your frontend domain is included in the allowed origins
+   - For development, make sure you're using http://localhost:3000
+   - If deploying to a different domain, you'll need to update the CORS configuration in the backend API
+
+2. **API Connection Errors**
    - Check if the API URL is correct
    - Verify network connectivity
    - Ensure CORS is properly configured
 
-2. **Slow Response Times**
+3. **Slow Response Times**
    - Implement loading states
    - Consider adding a timeout for API requests
    - Optimize the number of requests
 
-3. **UI Rendering Issues**
+4. **UI Rendering Issues**
    - Check browser compatibility
    - Verify CSS imports
    - Test on different screen sizes
