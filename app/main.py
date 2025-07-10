@@ -6,7 +6,7 @@ from app.vectordb import create_vector_store, get_vector_store_retriever
 from app.chatbot import generate_answer
 import traceback
 import logging
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, Field
 import hashlib
 import os
 from typing import Dict, Set, Optional
@@ -34,10 +34,13 @@ processed_urls: Dict[str, int] = {}
 class InitRequest(BaseModel):
     url: HttpUrl
     force_refresh: bool = False  # Optional parameter to force reprocessing
+    max_pages: int = Field(default=10, ge=1, le=50, description="Maximum number of pages to crawl")
+    max_depth: int = Field(default=2, ge=1, le=3, description="Maximum crawl depth")
 
 class InitResponse(BaseModel):
     status: str
     chunks: int
+    pages_scraped: int = 0
     cached: bool = False  # Indicates if the response came from cache
 
 class ChatRequest(BaseModel):
@@ -71,6 +74,7 @@ async def initialize_from_url(request: InitRequest):
                 return InitResponse(
                     status="initialized", 
                     chunks=processed_urls[url_hash],
+                    pages_scraped=0,  # We don't know how many pages were scraped originally
                     cached=True
                 )
             else:
@@ -81,14 +85,20 @@ async def initialize_from_url(request: InitRequest):
                 return InitResponse(
                     status="initialized", 
                     chunks=processed_urls[url_hash],
+                    pages_scraped=0,  # We don't know how many pages were scraped originally
                     cached=True
                 )
         
         # If URL is new or force_refresh is True, process it
-        logger.info(f"Processing URL: {url}")
+        logger.info(f"Processing URL: {url} with max_pages={request.max_pages}, max_depth={request.max_depth}")
         
-        # Scrape content from URL
-        content = scrape_url(url)
+        # Scrape content from URL and its subpages
+        content = scrape_url(
+            url, 
+            max_pages=request.max_pages, 
+            max_depth=request.max_depth
+        )
+        
         if not content:
             logger.error(f"Failed to scrape content from URL: {url}")
             raise HTTPException(status_code=400, detail=f"Failed to scrape content from URL: {url}")
@@ -97,11 +107,17 @@ async def initialize_from_url(request: InitRequest):
         content_preview = content[:500] + "..." if len(content) > 500 else content
         logger.info(f"Scraped content preview: {content_preview}")
         
+        # Count the number of pages scraped (by counting URL markers)
+        pages_scraped = content.count("URL: ")
+        logger.info(f"Scraped {pages_scraped} pages in total")
+        
         # Create chunks from content
         chunks = chunk_text(content)
         if not chunks:
             logger.error("No chunks created from content")
             raise HTTPException(status_code=400, detail="No chunks created from content")
+        
+        logger.info(f"Created {len(chunks)} chunks from {pages_scraped} pages")
         
         # Create vector store
         vector_store = create_vector_store(chunks)
@@ -118,6 +134,7 @@ async def initialize_from_url(request: InitRequest):
         return InitResponse(
             status="initialized", 
             chunks=len(chunks),
+            pages_scraped=pages_scraped,
             cached=False
         )
     
