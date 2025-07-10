@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 class CustomOpenAIEmbeddings(LangchainOpenAIEmbeddings):
-    """Custom OpenAI embeddings class that avoids problematic parameters."""
+    """Custom OpenAI embeddings class that works with openai==0.28.1."""
     
     def __init__(
         self,
@@ -21,20 +21,18 @@ class CustomOpenAIEmbeddings(LangchainOpenAIEmbeddings):
         self.model = model
         self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
         
-        # Only pass essential parameters to parent class
-        super().__init__(
-            model=model,
-            openai_api_key=self.openai_api_key,
-            # Explicitly exclude problematic parameters
-            client=None,
-        )
-        
-        # Override client creation to avoid proxies parameter
+        # For openai==0.28.1, we need to set the API key directly
         try:
             import openai
-            self.client = openai.OpenAI(api_key=self.openai_api_key)
+            openai.api_key = self.openai_api_key
+            
+            # Only pass essential parameters to parent class
+            super().__init__(
+                model=model,
+                openai_api_key=self.openai_api_key,
+            )
         except Exception as e:
-            logger.error(f"Failed to create OpenAI client: {str(e)}")
+            logger.error(f"Failed to initialize OpenAI: {str(e)}")
             raise
 
 def get_embedding_model():
