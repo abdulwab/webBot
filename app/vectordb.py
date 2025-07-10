@@ -16,6 +16,9 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 
+# Pinecone index dimension
+PINECONE_DIMENSION = 1024  # Using 1024 dimensions to match available Pinecone options
+
 # Validate environment variables
 if not PINECONE_API_KEY:
     logger.error("PINECONE_API_KEY environment variable is not set")
@@ -55,8 +58,8 @@ def create_vector_store(documents: list[Document]):
                 index_list = pc.list_indexes()
                 if PINECONE_INDEX_NAME not in index_list.names():
                     logger.info(f"Index {PINECONE_INDEX_NAME} does not exist. Creating...")
-                    # OpenAI text-embedding-ada-002 has 1536 dimensions
-                    pc.create_index(name=PINECONE_INDEX_NAME, dimension=1536, metric="cosine")
+                    # Create index with 1024 dimensions
+                    pc.create_index(name=PINECONE_INDEX_NAME, dimension=PINECONE_DIMENSION, metric="cosine")
                     logger.info(f"Waiting for index {PINECONE_INDEX_NAME} to be ready...")
                     time.sleep(10)  # Wait for index to be ready
                 else:
