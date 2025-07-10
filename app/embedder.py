@@ -1,7 +1,6 @@
-from langchain.embeddings import HuggingFaceInferenceAPIEmbeddings
+from langchain.embeddings import HuggingFaceEmbeddings
 
 def get_embedding_model():
-    return HuggingFaceInferenceAPIEmbeddings(
-        api_key=None,  # You can skip or use HF token
+    return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
