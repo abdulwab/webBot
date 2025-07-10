@@ -76,6 +76,13 @@ def create_vector_store(documents: list[Document]):
         
         logger.info(f"Upserting {len(documents)} documents to Pinecone")
         try:
+            # Log document metadata before upserting
+            for i, doc in enumerate(documents[:3]):  # Log only first 3 for brevity
+                logger.info(f"Document {i+1} metadata: {doc.metadata}")
+                preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
+                logger.info(f"Document {i+1} content preview: {preview}")
+            
+            # Create vector store with documents
             vector_store = LangchainPinecone.from_documents(
                 documents=documents,
                 embedding=embedder,
@@ -105,13 +112,23 @@ def get_vector_store_retriever(k: int = 5):
         logger.info(f"Getting retriever from index {PINECONE_INDEX_NAME} with k={k}")
         embedder = get_embedding_model()
         
+        # Create vector store from existing index
         vector_store = LangchainPinecone.from_existing_index(
             index_name=PINECONE_INDEX_NAME,
             embedding=embedder
         )
         
-        retriever = vector_store.as_retriever(search_kwargs={"k": k})
-        logger.info("Successfully created retriever")
+        # Configure retriever to return similarity scores and fetch k documents
+        retriever = vector_store.as_retriever(
+            search_type="similarity",  # Use similarity search
+            search_kwargs={
+                "k": k,                # Number of documents to retrieve
+                "score_threshold": 0.5,  # Minimum similarity score (0-1)
+                "include_metadata": True  # Include metadata in results
+            }
+        )
+        
+        logger.info(f"Successfully created retriever with k={k}")
         return retriever
     except Exception as e:
         logger.error(f"Error getting vector store retriever: {str(e)}")

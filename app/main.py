@@ -81,7 +81,7 @@ async def initialize_from_url(request: InitRequest):
                 # If the URL was processed but retriever is None (e.g., after server restart)
                 # Get the retriever from the existing vector store
                 logger.info("Retriever not in memory. Retrieving from vector store.")
-                retriever = get_vector_store_retriever()
+                retriever = get_vector_store_retriever(k=5)
                 return InitResponse(
                     status="initialized", 
                     chunks=processed_urls[url_hash],
@@ -125,8 +125,16 @@ async def initialize_from_url(request: InitRequest):
             logger.error("Failed to create vector store")
             raise HTTPException(status_code=500, detail="Failed to create vector store")
         
-        # Get retriever
-        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+        # Get retriever with proper configuration
+        retriever = vector_store.as_retriever(
+            search_type="similarity",
+            search_kwargs={
+                "k": 5,
+                "score_threshold": 0.5,
+                "include_metadata": True
+            }
+        )
+        logger.info("Successfully configured retriever with similarity search")
         
         # Update the processed URLs cache
         processed_urls[url_hash] = len(chunks)
