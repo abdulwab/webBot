@@ -123,7 +123,6 @@ def get_vector_store_retriever(k: int = 5):
             search_type="similarity",  # Use similarity search
             search_kwargs={
                 "k": k,                # Number of documents to retrieve
-                "score_threshold": 0.5,  # Minimum similarity score (0-1)
                 "include_metadata": True  # Include metadata in results
             }
         )

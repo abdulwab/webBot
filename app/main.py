@@ -130,7 +130,6 @@ async def initialize_from_url(request: InitRequest):
             search_type="similarity",
             search_kwargs={
                 "k": 5,
-                "score_threshold": 0.5,
                 "include_metadata": True
             }
         )

@@ -34,10 +34,25 @@ def generate_answer(query, retriever):
         start_time = time.time()
         
         # Get relevant documents from vector store
-        docs = retriever.get_relevant_documents(query)
+        results = retriever.get_relevant_documents(query)
         
         retrieval_time = time.time() - start_time
         logger.info(f"Vector search completed in {retrieval_time:.2f} seconds")
+        
+        # Process the results - they could be Documents or (Document, score) tuples
+        docs = []
+        scores = []
+        
+        for item in results:
+            # Check if the item is a tuple (Document, score)
+            if isinstance(item, tuple) and len(item) == 2:
+                doc, score = item
+                docs.append(doc)
+                scores.append(score)
+            else:
+                # It's just a Document
+                docs.append(item)
+                scores.append(None)
         
         if not docs:
             logger.warning("No relevant documents found in vector store for this query")
@@ -45,11 +60,11 @@ def generate_answer(query, retriever):
         else:
             logger.info(f"Found {len(docs)} relevant documents from vector store")
             
-            # Log similarity scores if available
-            for i, doc in enumerate(docs):
-                source = doc.metadata.get("source", "Unknown source")
-                score = doc.metadata.get("score", "Unknown score")
-                logger.info(f"Document {i+1} from {source} with score: {score}")
+            # Log documents and scores
+            for i, (doc, score) in enumerate(zip(docs, scores)):
+                source = doc.metadata.get("source", "Unknown source") if hasattr(doc, 'metadata') else "Unknown source"
+                score_str = f"{score:.4f}" if score is not None else "Not available"
+                logger.info(f"Document {i+1} from {source} with score: {score_str}")
                 
                 # Log a preview of each document
                 preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
@@ -59,8 +74,9 @@ def generate_answer(query, retriever):
             context_parts = []
             for i, doc in enumerate(docs):
                 # Extract source information from metadata
-                source = doc.metadata.get("source", "Unknown source")
-                source_info = f"Source: {source}"
+                source = doc.metadata.get("source", "Unknown source") if hasattr(doc, 'metadata') else "Unknown source"
+                score_str = f" (score: {scores[i]:.4f})" if scores[i] is not None else ""
+                source_info = f"Source: {source}{score_str}"
                 
                 # Add the document with its source
                 context_parts.append(f"[Document {i+1}] {source_info}\n{doc.page_content}")
