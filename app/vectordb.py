@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from langchain.vectorstores import Pinecone as LangchainPinecone
-from langchain.embeddings import OpenAIEmbeddings
+from app.embedder import get_embedding_model, CustomOpenAIEmbeddings
 from langchain.schema import Document
 from pinecone import Pinecone
 import logging
@@ -33,25 +33,6 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize Pinecone client: {str(e)}")
     raise
-
-
-def get_embedding_model():
-    """Create embedding model."""
-    try:
-        logger.info("Initializing embedding model")
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            logger.error("OPENAI_API_KEY environment variable is not set")
-            raise ValueError("OPENAI_API_KEY environment variable is not set")
-        
-        return OpenAIEmbeddings(
-            model="text-embedding-ada-002",  # Using older model for better compatibility
-            openai_api_key=openai_api_key,
-            client=None  # Let LangChain create the client with default settings
-        )
-    except Exception as e:
-        logger.error(f"Failed to initialize embedding model: {str(e)}")
-        raise
 
 
 def create_vector_store(documents: list[Document]):
