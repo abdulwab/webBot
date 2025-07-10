@@ -92,8 +92,15 @@ def create_vector_store(documents: list[Document]):
         raise
 
 
-def get_vector_store_retriever(k: int = 3):
-    """Load existing vector store and return retriever."""
+def get_vector_store_retriever(k: int = 5):
+    """Load existing vector store and return retriever.
+    
+    Args:
+        k: Number of documents to retrieve (default: 5)
+        
+    Returns:
+        A retriever object
+    """
     try:
         logger.info(f"Getting retriever from index {PINECONE_INDEX_NAME} with k={k}")
         embedder = get_embedding_model()

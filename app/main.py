@@ -93,6 +93,10 @@ async def initialize_from_url(request: InitRequest):
             logger.error(f"Failed to scrape content from URL: {url}")
             raise HTTPException(status_code=400, detail=f"Failed to scrape content from URL: {url}")
         
+        # Log a preview of the scraped content
+        content_preview = content[:500] + "..." if len(content) > 500 else content
+        logger.info(f"Scraped content preview: {content_preview}")
+        
         # Create chunks from content
         chunks = chunk_text(content)
         if not chunks:
@@ -106,7 +110,7 @@ async def initialize_from_url(request: InitRequest):
             raise HTTPException(status_code=500, detail="Failed to create vector store")
         
         # Get retriever
-        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
         
         # Update the processed URLs cache
         processed_urls[url_hash] = len(chunks)
