@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from langchain.vectorstores import Pinecone as LangchainPinecone
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.embeddings import OpenAIEmbeddings
 from langchain.schema import Document
 from pinecone import Pinecone
 import logging
@@ -39,7 +39,15 @@ def get_embedding_model():
     """Create embedding model."""
     try:
         logger.info("Initializing embedding model")
-        return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            logger.error("OPENAI_API_KEY environment variable is not set")
+            raise ValueError("OPENAI_API_KEY environment variable is not set")
+        
+        return OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            openai_api_key=openai_api_key
+        )
     except Exception as e:
         logger.error(f"Failed to initialize embedding model: {str(e)}")
         raise
@@ -65,7 +73,8 @@ def create_vector_store(documents: list[Document]):
                 index_list = pc.list_indexes()
                 if PINECONE_INDEX_NAME not in index_list.names():
                     logger.info(f"Index {PINECONE_INDEX_NAME} does not exist. Creating...")
-                    pc.create_index(name=PINECONE_INDEX_NAME, dimension=384, metric="cosine")
+                    # OpenAI text-embedding-3-small has 1536 dimensions
+                    pc.create_index(name=PINECONE_INDEX_NAME, dimension=1536, metric="cosine")
                     logger.info(f"Waiting for index {PINECONE_INDEX_NAME} to be ready...")
                     time.sleep(10)  # Wait for index to be ready
                 else:
