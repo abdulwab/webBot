@@ -36,7 +36,7 @@ Initialize the chatbot by scraping a URL, chunking the content, and creating a v
 **Request Body:**
 ```json
 {
-  "url": "https://example.com"
+  "url": "https://2wrap.com/"
 }
 ```
 
