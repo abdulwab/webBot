@@ -205,3 +205,84 @@ def scrape_url(url, max_retries=2, timeout=10, max_pages=10, max_depth=2):
     logger.info(f"Successfully scraped {pages_scraped} pages with {len(combined_content)} total characters")
     
     return combined_content
+
+def scrape_website(url, max_retries=2, timeout=10, max_pages=10, max_depth=2) -> Dict[str, str]:
+    """
+    Scrape content from a website and return a dictionary mapping URLs to their content
+    
+    Args:
+        url: The starting URL to scrape
+        max_retries: Maximum number of retry attempts per page
+        timeout: Request timeout in seconds
+        max_pages: Maximum number of pages to scrape
+        max_depth: Maximum crawl depth
+        
+    Returns:
+        Dictionary mapping URLs to their content
+    """
+    if not is_valid_url(url):
+        logger.error(f"Invalid URL format: {url}")
+        raise ValueError(f"Invalid URL format: {url}")
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    # Track visited URLs to avoid duplicates
+    visited_urls: Set[str] = set()
+    # Queue of URLs to visit with their depth: (url, depth)
+    url_queue: List[tuple] = [(url, 0)]
+    # Store content from each page
+    page_contents: Dict[str, str] = {}
+    # Track pages scraped
+    pages_scraped = 0
+    
+    while url_queue and pages_scraped < max_pages:
+        current_url, current_depth = url_queue.pop(0)
+        
+        # Skip if already visited or exceeds max depth
+        if current_url in visited_urls or current_depth > max_depth:
+            continue
+        
+        # Mark as visited
+        visited_urls.add(current_url)
+        
+        # Try to scrape with retries
+        retry_count = 0
+        content = None
+        links = set()
+        
+        while retry_count <= max_retries and not content:
+            try:
+                content, links = scrape_single_page(current_url, headers, timeout)
+                if content:
+                    page_contents[current_url] = content
+                    pages_scraped += 1
+                    logger.info(f"Successfully scraped page {pages_scraped}/{max_pages}: {current_url}")
+                    
+                    # Add new links to the queue if not at max depth
+                    if current_depth < max_depth:
+                        for link in links:
+                            if link not in visited_urls:
+                                url_queue.append((link, current_depth + 1))
+                                
+                    # Sort queue by depth to do breadth-first search
+                    url_queue.sort(key=lambda x: x[1])
+                    
+                    break
+            except Exception as e:
+                retry_count += 1
+                logger.warning(f"Error on attempt {retry_count} for {current_url}: {str(e)}")
+                time.sleep(1)  # Wait before retrying
+        
+        # Log if all retries failed
+        if not content:
+            logger.error(f"Failed to scrape {current_url} after {max_retries} attempts")
+    
+    # Check if we scraped any pages
+    if not page_contents:
+        logger.error("No content was scraped from any page")
+        raise ValueError("Failed to scrape any content")
+    
+    logger.info(f"Successfully scraped {pages_scraped} pages")
+    return page_contents

@@ -1,15 +1,18 @@
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 import logging
 import re
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
-def chunk_text(text):
+def chunk_text(text: str, source: Optional[str] = None) -> List[Document]:
     """
     Split text into chunks using RecursiveCharacterTextSplitter
     
     Args:
         text: The text to split into chunks
+        source: Optional source URL for the text
         
     Returns:
         List of Document objects
@@ -60,7 +63,11 @@ def chunk_text(text):
                     url = url_match.group(1)
                     # Add metadata
                     doc.metadata["source"] = url
-                    doc.metadata["page"] = i
+                else:
+                    # Use provided source if no URL found in content
+                    doc.metadata["source"] = source or "unknown"
+                    
+                doc.metadata["page"] = i
                 
             all_docs.extend(page_docs)
             
