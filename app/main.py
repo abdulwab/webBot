@@ -6,6 +6,7 @@ from app.vectordb import create_vector_store, get_vector_store_retriever
 from app.chatbot import generate_answer
 import traceback
 import logging
+from pydantic import BaseModel, HttpUrl
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -22,21 +23,30 @@ app = FastAPI(
 # Global retriever cache
 retriever = None
 
+# Pydantic models for request validation
+class InitRequest(BaseModel):
+    url: HttpUrl
+
+class ChatRequest(BaseModel):
+    query: str
+
+class ChatResponse(BaseModel):
+    response: str
+
+class InitResponse(BaseModel):
+    status: str
+    chunks: int
+
 
 @app.get("/")
 async def root():
     return {"status": "Ecom AI Agent is running on Railway 🚀"}
 
 
-@app.post("/init")
-async def initialize_from_url(request: Request):
+@app.post("/init", response_model=InitResponse)
+async def initialize_from_url(request: InitRequest):
     try:
-        data = await request.json()
-        url = data.get("url")
-        
-        if not url:
-            logger.error("URL parameter is missing")
-            raise HTTPException(status_code=400, detail="URL parameter is required")
+        url = str(request.url)
         
         logger.info(f"Scraping URL: {url}")
         try:
@@ -78,11 +88,10 @@ async def initialize_from_url(request: Request):
         raise HTTPException(status_code=500, detail=f"Initialization failed: {str(e)}")
 
 
-@app.post("/chat")
-async def chat(request: Request):
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
     try:
-        data = await request.json()
-        query = data.get("query")
+        query = request.query
         
         if not query:
             logger.error("Query parameter is missing")
