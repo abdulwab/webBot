@@ -1,103 +1,91 @@
 import os
-from dotenv import load_dotenv
-from langchain.vectorstores import Pinecone as LangchainPinecone
-from app.embedder import get_embedding_model, SimpleOpenAIEmbeddings
-from langchain.schema import Document
-from pinecone import Pinecone
 import logging
-import time
+from typing import List, Optional
+from langchain_pinecone import PineconeVectorStore as LangchainPinecone
+from langchain_core.documents import Document
+import pinecone
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# Get environment variables
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
+PINECONE_ENVIRONMENT = os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter")
+PINECONE_INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "webbot-index")
+PINECONE_DIMENSION = 1536  # OpenAI embeddings dimension
 
-# Load from .env
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
+# Flag to track if Pinecone has been initialized
+pinecone_initialized = False
 
-# Pinecone index dimension
-PINECONE_DIMENSION = 1024  # Using 1024 dimensions to match available Pinecone options
-
-# Validate environment variables
-if not PINECONE_API_KEY:
-    logger.error("PINECONE_API_KEY environment variable is not set")
-    raise ValueError("PINECONE_API_KEY environment variable is not set")
-if not PINECONE_ENVIRONMENT:
-    logger.error("PINECONE_ENVIRONMENT environment variable is not set")
-    raise ValueError("PINECONE_ENVIRONMENT environment variable is not set")
-if not PINECONE_INDEX_NAME:
-    logger.error("PINECONE_INDEX_NAME environment variable is not set")
-    raise ValueError("PINECONE_INDEX_NAME environment variable is not set")
-
-try:
-    logger.info(f"Initializing Pinecone client with environment: {PINECONE_ENVIRONMENT}")
-    pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
-except Exception as e:
-    logger.error(f"Failed to initialize Pinecone client: {str(e)}")
-    raise
-
-
-def create_vector_store(documents: list[Document]):
-    """Create a new vector store and upsert documents into Pinecone."""
-    if not documents:
-        logger.error("No documents provided to create_vector_store")
-        raise ValueError("No documents provided to create_vector_store")
+def init_pinecone():
+    """Initialize Pinecone client."""
+    global pinecone_initialized
+    
+    if pinecone_initialized:
+        logger.info("Pinecone already initialized, skipping initialization")
+        return
     
     try:
-        embedder = get_embedding_model()
-        logger.info(f"Creating/checking Pinecone index: {PINECONE_INDEX_NAME}")
-        
-        # Check if index exists with retry logic
-        max_retries = 3
-        retry_count = 0
-        index_exists = False
-        
-        while retry_count < max_retries:
-            try:
-                index_list = pc.list_indexes()
-                if PINECONE_INDEX_NAME not in index_list.names():
-                    logger.info(f"Index {PINECONE_INDEX_NAME} does not exist. Creating...")
-                    # Create index with 1024 dimensions
-                    pc.create_index(name=PINECONE_INDEX_NAME, dimension=PINECONE_DIMENSION, metric="cosine")
-                    logger.info(f"Waiting for index {PINECONE_INDEX_NAME} to be ready...")
-                    time.sleep(10)  # Wait for index to be ready
-                else:
-                    logger.info(f"Index {PINECONE_INDEX_NAME} already exists")
-                    index_exists = True
-                    break
-            except Exception as e:
-                retry_count += 1
-                logger.warning(f"Error checking/creating index (attempt {retry_count}/{max_retries}): {str(e)}")
-                if retry_count >= max_retries:
-                    logger.error(f"Failed to check/create index after {max_retries} attempts")
-                    raise
-                time.sleep(2)
-        
-        logger.info(f"Upserting {len(documents)} documents to Pinecone")
-        try:
-            # Log document metadata before upserting
-            for i, doc in enumerate(documents[:3]):  # Log only first 3 for brevity
-                logger.info(f"Document {i+1} metadata: {doc.metadata}")
-                preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
-                logger.info(f"Document {i+1} content preview: {preview}")
+        if not PINECONE_API_KEY:
+            raise ValueError("PINECONE_API_KEY environment variable is not set")
             
-            # Create vector store with documents
-            vector_store = LangchainPinecone.from_documents(
-                documents=documents,
-                embedding=embedder,
-                index_name=PINECONE_INDEX_NAME
+        # Initialize Pinecone client
+        logger.info(f"Initializing Pinecone with environment: {PINECONE_ENVIRONMENT}")
+        pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
+        
+        # Check if index exists, create if it doesn't
+        existing_indexes = pinecone.list_indexes()
+        
+        if PINECONE_INDEX_NAME not in existing_indexes:
+            logger.info(f"Creating new Pinecone index: {PINECONE_INDEX_NAME}")
+            pinecone.create_index(
+                name=PINECONE_INDEX_NAME,
+                dimension=PINECONE_DIMENSION,
+                metric="cosine"
             )
-            logger.info("Successfully created vector store and upserted documents")
-            return vector_store
-        except Exception as e:
-            logger.error(f"Error upserting documents to Pinecone: {str(e)}")
-            raise
+            logger.info(f"Successfully created Pinecone index: {PINECONE_INDEX_NAME}")
+        else:
+            logger.info(f"Pinecone index {PINECONE_INDEX_NAME} already exists")
             
+        pinecone_initialized = True
+        logger.info("Pinecone initialized successfully")
     except Exception as e:
-        logger.error(f"Error in create_vector_store: {str(e)}")
+        logger.error(f"Error initializing Pinecone: {str(e)}")
         raise
 
+def create_vector_store(documents: List[Document]):
+    """Create a vector store from documents.
+    
+    Args:
+        documents: List of Document objects with text and metadata
+        
+    Returns:
+        A vector store object
+    """
+    try:
+        # Ensure Pinecone is initialized
+        if not pinecone_initialized:
+            init_pinecone()
+        
+        from app.embedder import get_embedding_model
+        embedder = get_embedding_model()
+        
+        logger.info(f"Creating vector store with {len(documents)} documents")
+        
+        # Create and return the vector store
+        vector_store = LangchainPinecone.from_documents(
+            documents=documents,
+            embedding=embedder,
+            index_name=PINECONE_INDEX_NAME
+        )
+        
+        logger.info("Successfully created vector store")
+        return vector_store
+    except Exception as e:
+        logger.error(f"Error creating vector store: {str(e)}")
+        raise
 
 def get_vector_store_retriever(k: int = 5):
     """Load existing vector store and return retriever.
@@ -109,7 +97,12 @@ def get_vector_store_retriever(k: int = 5):
         A retriever object
     """
     try:
+        # Ensure Pinecone is initialized
+        if not pinecone_initialized:
+            init_pinecone()
+            
         logger.info(f"Getting retriever from index {PINECONE_INDEX_NAME} with k={k}")
+        from app.embedder import get_embedding_model
         embedder = get_embedding_model()
         
         # Create vector store from existing index

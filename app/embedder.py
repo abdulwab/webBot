@@ -1,96 +1,127 @@
 import os
 import logging
-import openai
-from dotenv import load_dotenv
-from typing import Any, Dict, List
-from langchain.embeddings.base import Embeddings
 import numpy as np
+from typing import List, Dict, Any
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# Get environment variables
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+TARGET_DIMENSIONS = 1536  # Dimensions for OpenAI embeddings
 
-class SimpleOpenAIEmbeddings(Embeddings):
-    """A simple implementation of OpenAI embeddings using the v0.28.1 client.
-    This version resizes the embeddings to 1024 dimensions to match the available Pinecone index option."""
+class CustomOpenAIEmbeddings(Embeddings):
+    """Custom wrapper for OpenAI embeddings."""
     
-    def __init__(
-        self,
-        model_name: str = "text-embedding-ada-002",
-        openai_api_key: str = None,
-        target_dimensions: int = 1024,
-    ):
-        """Initialize with model name, API key, and target dimensions."""
-        self.model_name = model_name
-        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-        self.target_dimensions = target_dimensions
-        if not self.openai_api_key:
-            raise ValueError("OpenAI API key is not provided and not found in environment")
-        
-        # Set API key for the openai package
-        openai.api_key = self.openai_api_key
-        logger.info(f"Initialized SimpleOpenAIEmbeddings with model {self.model_name} (resizing to {self.target_dimensions} dimensions)")
-    
-    def _resize_embedding(self, embedding: List[float]) -> List[float]:
-        """Resize embedding to target dimensions using PCA-like approach."""
-        if len(embedding) == self.target_dimensions:
-            return embedding
+    def __init__(self):
+        """Initialize the embeddings model."""
+        if not OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY environment variable is not set")
             
-        # If original is larger, we'll use a simple dimensionality reduction
-        # This is a simple approach - in production you might want a more sophisticated method
-        if len(embedding) > self.target_dimensions:
-            # Convert to numpy for easier manipulation
-            emb_array = np.array(embedding)
-            # Take evenly spaced elements to reduce dimensions
-            indices = np.round(np.linspace(0, len(embedding) - 1, self.target_dimensions)).astype(int)
-            resized = emb_array[indices].tolist()
-            return resized
-        else:
-            # If original is smaller (unlikely), we'll pad with zeros
-            return embedding + [0.0] * (self.target_dimensions - len(embedding))
-    
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Get embeddings for multiple documents."""
-        if not texts:
-            return []
+        self.embeddings_model = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            openai_api_key=OPENAI_API_KEY
+        )
+        logger.info("Initialized OpenAI embeddings model")
         
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for a list of documents.
+        
+        Args:
+            texts: List of text strings to embed
+            
+        Returns:
+            List of embeddings, one for each text
+        """
         try:
-            logger.info(f"Embedding {len(texts)} documents with model {self.model_name}")
-            response = openai.Embedding.create(
-                model=self.model_name,
-                input=texts
-            )
-            # Resize each embedding to target dimensions
-            embeddings = [data["embedding"] for data in response["data"]]
-            return [self._resize_embedding(emb) for emb in embeddings]
+            logger.info(f"Generating embeddings for {len(texts)} texts")
+            embeddings = self.embeddings_model.embed_documents(texts)
+            logger.info(f"Successfully generated embeddings with dimensions: {len(embeddings[0])}")
+            return embeddings
         except Exception as e:
-            logger.error(f"Error embedding documents: {str(e)}")
+            logger.error(f"Error generating embeddings: {str(e)}")
             raise
     
     def embed_query(self, text: str) -> List[float]:
-        """Get embedding for a single query."""
+        """Generate embeddings for a query.
+        
+        Args:
+            text: Query text to embed
+            
+        Returns:
+            Embedding for the query
+        """
         try:
-            logger.info(f"Embedding query with model {self.model_name}")
-            response = openai.Embedding.create(
-                model=self.model_name,
-                input=[text]
-            )
-            embedding = response["data"][0]["embedding"]
-            # Resize to target dimensions
-            return self._resize_embedding(embedding)
+            logger.info(f"Generating embedding for query: '{text[:50]}...'")
+            embedding = self.embeddings_model.embed_query(text)
+            logger.info(f"Successfully generated query embedding with dimensions: {len(embedding)}")
+            return embedding
         except Exception as e:
-            logger.error(f"Error embedding query: {str(e)}")
+            logger.error(f"Error generating query embedding: {str(e)}")
             raise
 
-def get_embedding_model():
-    """Create embedding model."""
+def get_embedding_model() -> Embeddings:
+    """Get the embedding model.
+    
+    Returns:
+        An embedding model instance
+    """
     try:
-        logger.info("Initializing SimpleOpenAIEmbeddings")
-        return SimpleOpenAIEmbeddings(
-            model_name="text-embedding-ada-002",
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            target_dimensions=1024  # Match the available Pinecone index dimension
-        )
+        return CustomOpenAIEmbeddings()
     except Exception as e:
-        logger.error(f"Failed to initialize embedding model: {str(e)}")
+        logger.error(f"Error getting embedding model: {str(e)}")
+        raise
+
+def embed_texts(documents: List[Document], embedder: Embeddings = None) -> List[Dict[str, Any]]:
+    """Create embeddings for a list of documents and store them in Pinecone.
+    
+    Args:
+        documents: List of Document objects with text and metadata
+        embedder: Optional embedder model (will create one if not provided)
+        
+    Returns:
+        List of dictionaries with id, embedding, and metadata
+    """
+    if not documents:
+        logger.error("No documents provided to embed_texts")
+        raise ValueError("No documents provided to embed_texts")
+        
+    try:
+        # Get or create embedder
+        if not embedder:
+            embedder = get_embedding_model()
+            
+        # Extract text from documents
+        texts = [doc.page_content for doc in documents]
+        logger.info(f"Creating embeddings for {len(texts)} documents")
+        
+        # Generate embeddings
+        embeddings = embedder.embed_documents(texts)
+        
+        # Create records for vector store
+        records = []
+        for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
+            records.append({
+                "id": f"doc_{i}",
+                "embedding": embedding,
+                "metadata": doc.metadata,
+                "text": doc.page_content
+            })
+            
+        logger.info(f"Successfully created {len(records)} embedding records")
+        
+        # Import here to avoid circular imports
+        from app.vectordb import create_vector_store
+        
+        # Create vector store with embedded documents
+        create_vector_store(documents)
+        
+        return records
+    except Exception as e:
+        logger.error(f"Error embedding texts: {str(e)}")
         raise

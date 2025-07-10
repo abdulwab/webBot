@@ -1,188 +1,157 @@
-from fastapi import FastAPI, Request, HTTPException
-from app.scraper import scrape_url
-from app.chunker import chunk_text
-from app.embedder import get_embedding_model
-from app.vectordb import create_vector_store, get_vector_store_retriever
-from app.chatbot import generate_answer
-import traceback
 import logging
-from pydantic import BaseModel, HttpUrl, Field
-import hashlib
+import time
 import os
-from typing import Dict, Set, Optional
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import Optional, Dict, Any, List
 
-# Set up logging
+from app.vectordb import get_vector_store_retriever, init_pinecone
+from app.chatbot import generate_answer
+from app.scraper import scrape_website
+from app.chunker import chunk_text
+from app.embedder import get_embedding_model, embed_texts
+from app.llm import get_gemini_response
+
+# Configure logging
 logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Initialize FastAPI app
 app = FastAPI(
-    title="Ecom AI Agent",
+    title="Website RAG Chatbot API",
+    description="API for a chatbot that can answer questions about websites using RAG",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url=None,
+    docs_url="/docs"
 )
 
-# Global retriever cache
-retriever = None
+# Initialize Pinecone at startup
+init_pinecone()
 
-# URL processing cache
-# This dictionary will store URLs that have already been processed
-processed_urls: Dict[str, int] = {}
+# Initialize retriever at startup
+global_retriever = None
+try:
+    global_retriever = get_vector_store_retriever(k=5)
+    logger.info("Global retriever initialized successfully at startup")
+except Exception as e:
+    logger.error(f"Error initializing global retriever at startup: {str(e)}")
+    # We'll continue and try to initialize it later if needed
 
-# Pydantic models for request validation
-class InitRequest(BaseModel):
-    url: HttpUrl
-    force_refresh: bool = False  # Optional parameter to force reprocessing
-    max_pages: int = Field(default=10, ge=1, le=50, description="Maximum number of pages to crawl")
-    max_depth: int = Field(default=2, ge=1, le=3, description="Maximum crawl depth")
+# Define request and response models
+class WebsiteRequest(BaseModel):
+    url: str
+    max_pages: Optional[int] = 5
+    max_depth: Optional[int] = 1
 
-class InitResponse(BaseModel):
-    status: str
-    chunks: int
-    pages_scraped: int = 0
-    cached: bool = False  # Indicates if the response came from cache
-
-class ChatRequest(BaseModel):
+class QueryRequest(BaseModel):
     query: str
 
-class ChatResponse(BaseModel):
+class WebsiteResponse(BaseModel):
+    message: str
+    pages_processed: int
+    chunks_created: int
+
+class QueryResponse(BaseModel):
     answer: str
 
-def get_url_hash(url: str) -> str:
-    """Create a hash of the URL to use as a unique identifier."""
-    return hashlib.md5(url.encode()).hexdigest()
+# Error handler
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"An error occurred: {str(exc)}"}
+    )
 
 @app.get("/")
-async def root():
-    return {"status": "Ecom AI Agent is running on Railway 🚀"}
+def read_root():
+    return {"message": "Welcome to the Website RAG Chatbot API"}
 
-
-@app.post("/init", response_model=InitResponse)
-async def initialize_from_url(request: InitRequest):
-    global retriever
-    
+@app.post("/process-website", response_model=WebsiteResponse)
+def process_website(request: WebsiteRequest):
+    """
+    Process a website by scraping content, chunking text, and storing in vector DB
+    """
     try:
-        url = str(request.url)
-        url_hash = get_url_hash(url)
+        start_time = time.time()
+        logger.info(f"Processing website: {request.url}")
         
-        # Check if URL has already been processed and force_refresh is False
-        if url_hash in processed_urls and not request.force_refresh:
-            logger.info(f"URL {url} has already been processed. Using cached retriever.")
-            # If we already have a retriever, use it
-            if retriever:
-                return InitResponse(
-                    status="initialized", 
-                    chunks=processed_urls[url_hash],
-                    pages_scraped=0,  # We don't know how many pages were scraped originally
-                    cached=True
-                )
-            else:
-                # If the URL was processed but retriever is None (e.g., after server restart)
-                # Get the retriever from the existing vector store
-                logger.info("Retriever not in memory. Retrieving from vector store.")
-                retriever = get_vector_store_retriever(k=5)
-                return InitResponse(
-                    status="initialized", 
-                    chunks=processed_urls[url_hash],
-                    pages_scraped=0,  # We don't know how many pages were scraped originally
-                    cached=True
-                )
-        
-        # If URL is new or force_refresh is True, process it
-        logger.info(f"Processing URL: {url} with max_pages={request.max_pages}, max_depth={request.max_depth}")
-        
-        # Scrape content from URL and its subpages
-        content = scrape_url(
-            url, 
+        # Step 1: Scrape website content
+        scraped_pages = scrape_website(
+            request.url, 
             max_pages=request.max_pages, 
             max_depth=request.max_depth
         )
         
-        if not content:
-            logger.error(f"Failed to scrape content from URL: {url}")
-            raise HTTPException(status_code=400, detail=f"Failed to scrape content from URL: {url}")
+        if not scraped_pages:
+            raise HTTPException(status_code=400, detail="Failed to scrape website or no content found")
         
-        # Log a preview of the scraped content
-        content_preview = content[:500] + "..." if len(content) > 500 else content
-        logger.info(f"Scraped content preview: {content_preview}")
+        logger.info(f"Successfully scraped {len(scraped_pages)} pages from {request.url}")
         
-        # Count the number of pages scraped (by counting URL markers)
-        pages_scraped = content.count("URL: ")
-        logger.info(f"Scraped {pages_scraped} pages in total")
+        # Step 2: Chunk the text from all pages
+        all_chunks = []
+        for page_url, page_content in scraped_pages.items():
+            chunks = chunk_text(page_content, source=page_url)
+            all_chunks.extend(chunks)
+            
+        if not all_chunks:
+            raise HTTPException(status_code=400, detail="Failed to create text chunks from website content")
         
-        # Create chunks from content
-        chunks = chunk_text(content)
-        if not chunks:
-            logger.error("No chunks created from content")
-            raise HTTPException(status_code=400, detail="No chunks created from content")
+        logger.info(f"Created {len(all_chunks)} chunks from website content")
         
-        logger.info(f"Created {len(chunks)} chunks from {pages_scraped} pages")
+        # Step 3: Get embeddings and store in vector DB
+        embedder = get_embedding_model()
+        embed_texts(all_chunks, embedder)
         
-        # Create vector store
-        vector_store = create_vector_store(chunks)
-        if not vector_store:
-            logger.error("Failed to create vector store")
-            raise HTTPException(status_code=500, detail="Failed to create vector store")
+        processing_time = time.time() - start_time
+        logger.info(f"Website processing completed in {processing_time:.2f} seconds")
         
-        # Get retriever with proper configuration
-        retriever = vector_store.as_retriever(
-            search_type="similarity",
-            search_kwargs={
-                "k": 5,
-                "include_metadata": True
-            }
-        )
-        logger.info("Successfully configured retriever with similarity search")
+        # Reinitialize the global retriever after adding new data
+        global global_retriever
+        global_retriever = get_vector_store_retriever(k=5)
+        logger.info("Global retriever reinitialized after adding new data")
         
-        # Update the processed URLs cache
-        processed_urls[url_hash] = len(chunks)
-        
-        return InitResponse(
-            status="initialized", 
-            chunks=len(chunks),
-            pages_scraped=pages_scraped,
-            cached=False
-        )
-    
+        return {
+            "message": f"Successfully processed website {request.url}",
+            "pages_processed": len(scraped_pages),
+            "chunks_created": len(all_chunks)
+        }
     except Exception as e:
-        logger.error(f"Error initializing from URL: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error creating vector store: {str(e)}")
+        logger.error(f"Error processing website: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing website: {str(e)}")
 
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    global retriever
-    
+@app.post("/query", response_model=QueryResponse)
+def query_website(request: QueryRequest):
+    """
+    Query the chatbot about processed website content
+    """
     try:
-        if not retriever:
-            logger.error("Retriever not initialized. Call /init endpoint first.")
-            raise HTTPException(
-                status_code=400, 
-                detail="Chatbot not initialized. Please call /init endpoint with a URL first."
-            )
+        logger.info(f"Received query: {request.query}")
         
-        query = request.query
-        if not query:
-            logger.error("Empty query provided")
-            raise HTTPException(status_code=400, detail="Query cannot be empty")
+        # Check if we have a global retriever
+        global global_retriever
+        if global_retriever is None:
+            # Try to initialize it now
+            try:
+                global_retriever = get_vector_store_retriever(k=5)
+                logger.info("Global retriever initialized on first query")
+            except Exception as e:
+                logger.error(f"Error initializing retriever: {str(e)}")
+                raise HTTPException(
+                    status_code=400, 
+                    detail="No website has been processed yet. Please process a website first."
+                )
         
-        # Generate answer
-        answer = generate_answer(query, retriever)
-        if not answer:
-            logger.error("Failed to generate answer")
-            raise HTTPException(status_code=500, detail="Failed to generate answer")
+        # Generate answer using the global retriever
+        answer = generate_answer(request.query, global_retriever)
         
-        return ChatResponse(answer=answer)
-    
+        return {"answer": answer}
     except Exception as e:
         logger.error(f"Error generating answer: {str(e)}")
-        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error generating answer: {str(e)}")
 
-
-# 👇 Needed for Railway local testing
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True)
