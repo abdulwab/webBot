@@ -6,11 +6,9 @@ uvicorn==0.30.1
 beautifulsoup4==4.12.3
 requests==2.31.0
 
-# Langchain core
-langchain==0.2.1
+# Langchain + Embeddings
+langchain==0.1.16
 langchain-community==0.0.29
-
-# Embedding and HF
 huggingface-hub==0.33.2
 
 # Vector store
