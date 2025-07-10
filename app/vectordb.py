@@ -4,6 +4,10 @@ from langchain.vectorstores import Pinecone as LangchainPinecone
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.schema import Document
 from pinecone import Pinecone
+import logging
+import time
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -12,33 +16,102 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 
-pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
+# Validate environment variables
+if not PINECONE_API_KEY:
+    logger.error("PINECONE_API_KEY environment variable is not set")
+    raise ValueError("PINECONE_API_KEY environment variable is not set")
+if not PINECONE_ENVIRONMENT:
+    logger.error("PINECONE_ENVIRONMENT environment variable is not set")
+    raise ValueError("PINECONE_ENVIRONMENT environment variable is not set")
+if not PINECONE_INDEX_NAME:
+    logger.error("PINECONE_INDEX_NAME environment variable is not set")
+    raise ValueError("PINECONE_INDEX_NAME environment variable is not set")
+
+try:
+    logger.info(f"Initializing Pinecone client with environment: {PINECONE_ENVIRONMENT}")
+    pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
+except Exception as e:
+    logger.error(f"Failed to initialize Pinecone client: {str(e)}")
+    raise
 
 
 def get_embedding_model():
     """Create embedding model."""
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    try:
+        logger.info("Initializing embedding model")
+        return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    except Exception as e:
+        logger.error(f"Failed to initialize embedding model: {str(e)}")
+        raise
 
 
 def create_vector_store(documents: list[Document]):
     """Create a new vector store and upsert documents into Pinecone."""
-    embedder = get_embedding_model()
-
-    if PINECONE_INDEX_NAME not in pc.list_indexes().names():
-        pc.create_index(name=PINECONE_INDEX_NAME, dimension=384, metric="cosine")
-
-    return LangchainPinecone.from_documents(
-        documents=documents,
-        embedding=embedder,
-        index_name=PINECONE_INDEX_NAME
-    )
+    if not documents:
+        logger.error("No documents provided to create_vector_store")
+        raise ValueError("No documents provided to create_vector_store")
+    
+    try:
+        embedder = get_embedding_model()
+        logger.info(f"Creating/checking Pinecone index: {PINECONE_INDEX_NAME}")
+        
+        # Check if index exists with retry logic
+        max_retries = 3
+        retry_count = 0
+        index_exists = False
+        
+        while retry_count < max_retries:
+            try:
+                index_list = pc.list_indexes()
+                if PINECONE_INDEX_NAME not in index_list.names():
+                    logger.info(f"Index {PINECONE_INDEX_NAME} does not exist. Creating...")
+                    pc.create_index(name=PINECONE_INDEX_NAME, dimension=384, metric="cosine")
+                    logger.info(f"Waiting for index {PINECONE_INDEX_NAME} to be ready...")
+                    time.sleep(10)  # Wait for index to be ready
+                else:
+                    logger.info(f"Index {PINECONE_INDEX_NAME} already exists")
+                    index_exists = True
+                    break
+            except Exception as e:
+                retry_count += 1
+                logger.warning(f"Error checking/creating index (attempt {retry_count}/{max_retries}): {str(e)}")
+                if retry_count >= max_retries:
+                    logger.error(f"Failed to check/create index after {max_retries} attempts")
+                    raise
+                time.sleep(2)
+        
+        logger.info(f"Upserting {len(documents)} documents to Pinecone")
+        try:
+            vector_store = LangchainPinecone.from_documents(
+                documents=documents,
+                embedding=embedder,
+                index_name=PINECONE_INDEX_NAME
+            )
+            logger.info("Successfully created vector store and upserted documents")
+            return vector_store
+        except Exception as e:
+            logger.error(f"Error upserting documents to Pinecone: {str(e)}")
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in create_vector_store: {str(e)}")
+        raise
 
 
 def get_vector_store_retriever(k: int = 3):
     """Load existing vector store and return retriever."""
-    embedder = get_embedding_model()
-
-    return LangchainPinecone.from_existing_index(
-        index_name=PINECONE_INDEX_NAME,
-        embedding=embedder
-    ).as_retriever(search_kwargs={"k": k})
+    try:
+        logger.info(f"Getting retriever from index {PINECONE_INDEX_NAME} with k={k}")
+        embedder = get_embedding_model()
+        
+        vector_store = LangchainPinecone.from_existing_index(
+            index_name=PINECONE_INDEX_NAME,
+            embedding=embedder
+        )
+        
+        retriever = vector_store.as_retriever(search_kwargs={"k": k})
+        logger.info("Successfully created retriever")
+        return retriever
+    except Exception as e:
+        logger.error(f"Error getting vector store retriever: {str(e)}")
+        raise
