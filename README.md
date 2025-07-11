@@ -1,94 +1,110 @@
-# Web Chatbot with RAG
+# 2wrap.com Comprehensive RAG Chatbot
 
-A FastAPI-based chatbot that uses Retrieval-Augmented Generation (RAG) to answer questions about web content. The application scrapes a given URL, chunks the content, creates embeddings, stores them in Pinecone, and then uses the Gemini API to generate answers based on the retrieved context.
+## Enhanced Features
 
-## Features
+This RAG system now provides **comprehensive scraping** of 2wrap.com with first-person responses as 2wrap.
 
-- Web scraping with BeautifulSoup
-- Text chunking with LangChain
-- Vector embeddings with OpenAI
-- Vector storage with Pinecone
-- LLM integration with Google's Gemini API
-- FastAPI endpoints with Swagger UI documentation
+### 🚀 Quick Start
 
-## Environment Variables
-
-Create a `.env` file in the root directory with the following variables:
-
-```
-PINECONE_API_KEY=your_pinecone_api_key
-PINECONE_ENVIRONMENT=your_pinecone_environment
-PINECONE_INDEX_NAME=your_pinecone_index_name
-GOOGLE_API_KEY=your_google_api_key
-OPENAI_API_KEY=your_openai_api_key
+1. **Start the server:**
+```bash
+python -m uvicorn app.main:app --reload
 ```
 
-## API Endpoints
+2. **Comprehensive Scraping (Recommended):**
+```bash
+# This scrapes ALL content from 2wrap.com (50+ pages)
+curl -X POST "http://localhost:8000/process-2wrap-comprehensive" \
+  -H "Content-Type: application/json" \
+  -d '{"force_refresh": false}'
+```
 
-### GET /
+3. **Query the chatbot:**
+```bash
+curl -X POST "http://localhost:8000/query" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What car wrapping services do you offer?"}'
+```
 
-A simple health check endpoint that returns a status message.
+### 📊 API Endpoints
 
-### POST /init
+#### GET `/status`
+Check system status and get usage instructions
 
-Initialize the chatbot by scraping a URL, chunking the content, and creating a vector store.
+#### POST `/process-2wrap-comprehensive`
+**Comprehensive scraping** - Gets ALL content from 2wrap.com including:
+- All services (wrapping, detailing, PPF, ceramic coating, tinting)
+- Complete pricing information
+- Color options and vinyl types
+- Gallery and portfolio
+- Company information and process
+- Testimonials and reviews
+- FAQ and blog content
 
-**Request Body:**
+**Request body:**
 ```json
 {
-  "url": "https://2wrap.com/"
+  "force_refresh": false  // Set to true to clear existing data
 }
 ```
 
-**Response:**
+#### POST `/query` 
+Query the chatbot - **Responds in first person as 2wrap**
+
+**Request body:**
 ```json
 {
-  "status": "initialized",
-  "chunks": 10
+  "query": "What are your prices for car wrapping?"
 }
 ```
 
-### POST /chat
+**Example first-person response:**
+> "We offer comprehensive car wrapping services starting at $2,500 for a full vehicle wrap. Our pricing depends on the vehicle size and vinyl type you choose. We use premium 3M and Avery Dennison materials..."
 
-Ask a question about the scraped content.
+### 🎯 Key Improvements
 
-**Request Body:**
-```json
-{
-  "query": "What is this website about?"
-}
-```
+1. **Comprehensive Content Coverage**
+   - Scrapes 50+ pages instead of just 5
+   - Hardcoded important URLs to ensure nothing is missed
+   - Covers all services, pricing, colors, gallery, etc.
 
-**Response:**
-```json
-{
-  "answer": "This website is about..."
-}
-```
+2. **First-Person Responses**
+   - Chatbot responds as 2wrap directly ("We offer...", "Our services include...")
+   - Professional but friendly tone
+   - Maintains business personality
 
-## Running Locally
+3. **Enhanced Accuracy**
+   - Confidence scoring with 70% threshold
+   - Source attribution for transparency
+   - Service-specific metadata for better matching
 
-1. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
+4. **Better Performance**
+   - Smart caching (24hr content, 6hr robots.txt)
+   - Batch processing for large datasets
+   - HTML structure-aware chunking
 
-2. Run the server:
-   ```
-   uvicorn app.main:app --reload
-   ```
+### 🔧 Configuration
 
-3. Visit `http://localhost:8000/docs` to access the Swagger UI documentation.
+The system automatically scrapes these key 2wrap.com pages:
+- `/services`, `/pricing`, `/gallery`, `/portfolio`
+- `/car-wrapping`, `/detailing`, `/paint-protection`
+- `/ceramic-coating`, `/window-tinting`, `/colors`
+- `/about`, `/contact`, `/process`, `/testimonials`
+- And many more...
 
-## Deployment
+### 💡 Usage Tips
 
-This application is configured for deployment on Railway. Simply push to your repository and Railway will handle the deployment process.
+1. **First time setup:** Use `/process-2wrap-comprehensive` to get all content
+2. **Regular updates:** Run comprehensive scraping weekly to keep content fresh
+3. **Force refresh:** Use `"force_refresh": true` to completely rebuild the knowledge base
+4. **Custom queries:** The system works best with specific questions about 2wrap's services
 
-## Error Handling
+### 🎨 Example Interactions
 
-The application includes comprehensive error handling and logging for all components, including:
-- URL validation and scraping errors
-- Text chunking validation
-- Pinecone connection and index management
-- OpenAI API integration
-- Gemini API integration
+**Customer:** "Do you do ceramic coating?"
+**2wrap Bot:** "Yes! We offer professional ceramic coating services to protect your vehicle's paint. Our ceramic coatings provide long-lasting protection against UV rays, chemicals, and environmental contaminants..."
+
+**Customer:** "What's your pricing for window tinting?"
+**2wrap Bot:** "We provide window tinting services with pricing that varies based on your vehicle type and the tint level you prefer. Our professional team uses high-quality films that..."
+
+The bot now responds naturally as 2wrap, providing specific information from your website content!

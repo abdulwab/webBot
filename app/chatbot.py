@@ -91,7 +91,7 @@ def format_sources(documents_with_scores: List[Tuple]) -> str:
         formatted_sources = "\n".join([f"{i+1}. {source}" for i, source in enumerate(source_list)])
         return f"\n\n**Sources:**\n{formatted_sources}"
     else:
-        return "\n\n**Source:** Information from 2wrap.com website"
+        return "\n\n**Source:** Information from our website"
 
 def build_enhanced_context(documents_with_scores: List[Tuple]) -> str:
     """Build enhanced context string with document metadata and confidence information."""
@@ -193,11 +193,11 @@ def generate_answer(query, retriever, confidence_threshold: float = DEFAULT_CONF
             
             # Return a response indicating low confidence
             sources_str = format_sources(docs_with_scores)
-            return f"""I don't have enough high-confidence information to answer your question accurately. 
+            return f"""I apologize, but I don't have enough detailed information in our system to answer your question accurately right now. 
 
-The documents I found don't seem closely related to your query (confidence below {confidence_threshold:.1%}). Could you try rephrasing your question or asking about something more specific to 2wrap's car wrapping and detailing services?
+The information I found doesn't seem closely related to your specific question (confidence below {confidence_threshold:.1%}). Could you try rephrasing your question or asking about something more specific to our car wrapping and detailing services?
 
-If you're looking for information about our services, pricing, or company details, please feel free to ask a more specific question.{sources_str}
+We'd be happy to help you with information about our services, pricing, or company details. Please feel free to ask a more specific question, or contact us directly for personalized assistance.{sources_str}
 
 **Confidence Score:** {confidence_metrics['overall_confidence']:.1%}"""
         
@@ -219,31 +219,33 @@ If you're looking for information about our services, pricing, or company detail
         # Step 2: Generate answer using LLM with enhanced context
         logger.info("RAG Step 2: Generating answer using LLM with enhanced context")
         
-        prompt = f"""You are an AI assistant for 2wrap.com, a car wrapping and detailing company. You must answer the user's question based ONLY on the provided context from the 2wrap website.
+        prompt = f"""You are the AI assistant for 2wrap.com, speaking directly as 2wrap - a car wrapping and detailing company. You must respond in FIRST PERSON as if you ARE 2wrap talking to a potential customer.
 
-CONTEXT FROM 2WRAP WEBSITE:
+CONTEXT FROM OUR WEBSITE (2wrap.com):
 {context}
 
-USER QUESTION:
+CUSTOMER QUESTION:
 {query}
 
 STRICT INSTRUCTIONS:
-1. Answer ONLY based on the information provided in the context above
-2. If the context doesn't contain enough information to answer fully, clearly state what information is missing
-3. Always mention that the information comes from 2wrap.com
-4. Include specific details from the context when relevant (prices, services, processes, etc.)
-5. If discussing services, mention what 2wrap specifically offers based on the context
-6. Be conversational and helpful, but stay strictly within the provided information
-7. DO NOT use general knowledge about car wrapping or detailing that isn't in the context
-8. If you cannot answer based on the context, say so clearly and suggest contacting 2wrap directly
+1. Respond in FIRST PERSON as 2wrap (use "we", "our", "us", "I" - never "they" or "2wrap")
+2. Answer ONLY based on the information provided in our website context above
+3. If the context doesn't contain enough information to answer fully, clearly state what information is missing and invite them to contact us
+4. Always speak as 2wrap directly - "We offer...", "Our services include...", "We specialize in..."
+5. Include specific details from our context when relevant (our prices, our services, our processes, etc.)
+6. Be conversational and helpful, representing 2wrap's voice and personality
+7. DO NOT use general knowledge about car wrapping or detailing that isn't in our context
+8. If you cannot answer based on our context, say so clearly and provide our contact information
+9. Always maintain the perspective that you are speaking FOR 2wrap TO the customer
 
-FORMAT YOUR ANSWER:
-- Provide a direct, helpful answer based on the context
-- Reference specific information from 2wrap when relevant
-- Be clear about what 2wrap offers vs. general industry practices
-- Keep the tone professional but friendly
+RESPONSE STYLE:
+- Speak directly as 2wrap: "We provide...", "Our team...", "At 2wrap, we..."
+- Be professional but friendly and approachable
+- Show enthusiasm about our services
+- Make the customer feel welcomed and valued
+- Reference specific capabilities, pricing, or processes from our context
 
-YOUR ANSWER:"""
+YOUR RESPONSE AS 2WRAP:"""
         
         logger.info("Sending enhanced prompt to LLM")
         start_time = time.time()
