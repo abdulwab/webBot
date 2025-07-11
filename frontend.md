@@ -58,7 +58,12 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://webbot-producti
 export async function processWebsite(url, maxPages = 5, maxDepth = 1) {
   const response = await fetch(`${API_BASE_URL}/process-website`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    // Include credentials if the API requires them and CORS allows it
+    credentials: 'include',
     body: JSON.stringify({ url, max_pages: maxPages, max_depth: maxDepth }),
   });
   
@@ -74,7 +79,12 @@ export async function processWebsite(url, maxPages = 5, maxDepth = 1) {
 export async function queryRag(query) {
   const response = await fetch(`${API_BASE_URL}/query`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    // Include credentials if the API requires them and CORS allows it
+    credentials: 'include',
     body: JSON.stringify({ query }),
   });
   

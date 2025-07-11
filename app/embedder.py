@@ -13,10 +13,9 @@ logger = logging.getLogger(__name__)
 
 # Get environment variables
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-TARGET_DIMENSIONS = 1024  # Match the Pinecone index dimension
 
 class CustomOpenAIEmbeddings(Embeddings):
-    """Custom wrapper for OpenAI embeddings that resizes to match Pinecone dimensions."""
+    """Custom wrapper for OpenAI embeddings using text-embedding-3-small with 1024 dimensions."""
     
     def __init__(self):
         """Initialize the embeddings model."""
@@ -24,69 +23,55 @@ class CustomOpenAIEmbeddings(Embeddings):
             raise ValueError("OPENAI_API_KEY environment variable is not set")
             
         try:
+            # Use text-embedding-3-small with 1024 dimensions
             self.embeddings_model = OpenAIEmbeddings(
                 model="text-embedding-3-small",
+                dimensions=1024,  # Must match your Pinecone index
                 openai_api_key=OPENAI_API_KEY
             )
-            logger.info("Initialized OpenAI embeddings model")
+            logger.info("Initialized OpenAI embeddings model with text-embedding-3-small (1024 dimensions)")
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI embeddings model: {str(e)}")
-            # Try with a different model if the first one fails
-            try:
-                logger.info("Trying with text-embedding-ada-002 model")
-                self.embeddings_model = OpenAIEmbeddings(
-                    model="text-embedding-ada-002",
-                    openai_api_key=OPENAI_API_KEY
-                )
-                logger.info("Initialized OpenAI embeddings model with ada-002")
-            except Exception as e2:
-                logger.error(f"Failed to initialize alternative model: {str(e2)}")
-                raise ValueError(f"Could not initialize any embedding model: {str(e)}, then {str(e2)}")
+            raise ValueError(f"Could not initialize embedding model: {str(e)}")
     
-    def _resize_embedding(self, embedding: List[float], target_dim: int = TARGET_DIMENSIONS) -> List[float]:
-        """Resize embedding to target dimensions."""
-        if len(embedding) == target_dim:
-            return embedding
-            
-        logger.info(f"Resizing embedding from {len(embedding)} to {target_dim} dimensions")
-        
-        # Convert to numpy for easier manipulation
-        emb_array = np.array(embedding)
-        
-        if len(embedding) > target_dim:
-            # If original is larger, use dimensionality reduction
-            # Take evenly spaced elements to reduce dimensions
-            indices = np.round(np.linspace(0, len(embedding) - 1, target_dim)).astype(int)
-            resized = emb_array[indices].tolist()
-            return resized
-        else:
-            # If original is smaller (unlikely), pad with zeros
-            return embedding + [0.0] * (target_dim - len(embedding))
-        
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for a list of documents and resize to target dimensions.
+    def embed_documents(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
+        """Generate embeddings for a list of documents with batching support.
         
         Args:
             texts: List of text strings to embed
+            batch_size: Number of texts to process in each batch
             
         Returns:
             List of embeddings, one for each text
         """
+        if not texts:
+            logger.warning("Empty texts list provided to embed_documents")
+            return []
+            
         try:
-            logger.info(f"Generating embeddings for {len(texts)} texts")
-            embeddings = self.embeddings_model.embed_documents(texts)
+            logger.info(f"Generating embeddings for {len(texts)} texts with batch size {batch_size}")
             
-            # Resize embeddings to match Pinecone dimensions
-            resized_embeddings = [self._resize_embedding(emb) for emb in embeddings]
+            # Process in batches to handle large document sets
+            all_embeddings = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i:i + batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1}/{(len(texts) + batch_size - 1)//batch_size} ({len(batch)} texts)")
+                
+                batch_embeddings = self.embeddings_model.embed_documents(batch)
+                all_embeddings.extend(batch_embeddings)
+                
+                # Log the dimensions of the first embedding in the batch for verification
+                if batch_embeddings and i == 0:
+                    logger.info(f"Embedding dimensions: {len(batch_embeddings[0])}")
             
-            logger.info(f"Successfully generated and resized embeddings to {TARGET_DIMENSIONS} dimensions")
-            return resized_embeddings
+            logger.info(f"Successfully generated {len(all_embeddings)} embeddings with 1024 dimensions")
+            return all_embeddings
         except Exception as e:
             logger.error(f"Error generating embeddings: {str(e)}")
             raise
     
     def embed_query(self, text: str) -> List[float]:
-        """Generate embeddings for a query and resize to target dimensions.
+        """Generate embeddings for a query.
         
         Args:
             text: Query text to embed
@@ -94,15 +79,17 @@ class CustomOpenAIEmbeddings(Embeddings):
         Returns:
             Embedding for the query
         """
+        if not text:
+            logger.warning("Empty text provided to embed_query")
+            return []
+            
         try:
             logger.info(f"Generating embedding for query: '{text[:50]}...'")
             embedding = self.embeddings_model.embed_query(text)
             
-            # Resize embedding to match Pinecone dimensions
-            resized_embedding = self._resize_embedding(embedding)
-            
-            logger.info(f"Successfully generated and resized query embedding to {TARGET_DIMENSIONS} dimensions")
-            return resized_embedding
+            # Log dimensions for verification
+            logger.info(f"Successfully generated query embedding with {len(embedding)} dimensions")
+            return embedding
         except Exception as e:
             logger.error(f"Error generating query embedding: {str(e)}")
             raise
@@ -119,12 +106,13 @@ def get_embedding_model() -> Embeddings:
         logger.error(f"Error getting embedding model: {str(e)}")
         raise
 
-def embed_texts(documents: List[Document], embedder: Embeddings = None) -> List[Dict[str, Any]]:
+def embed_texts(documents: List[Document], embedder: Embeddings = None, batch_size: int = 100) -> List[Dict[str, Any]]:
     """Create embeddings for a list of documents and store them in Pinecone.
     
     Args:
         documents: List of Document objects with text and metadata
         embedder: Optional embedder model (will create one if not provided)
+        batch_size: Number of documents to process in each batch
         
     Returns:
         List of dictionaries with id, embedding, and metadata
@@ -140,10 +128,13 @@ def embed_texts(documents: List[Document], embedder: Embeddings = None) -> List[
             
         # Extract text from documents
         texts = [doc.page_content for doc in documents]
-        logger.info(f"Creating embeddings for {len(texts)} documents")
+        logger.info(f"Creating embeddings for {len(texts)} documents with batch size {batch_size}")
         
-        # Generate embeddings
-        embeddings = embedder.embed_documents(texts)
+        # Generate embeddings with batching
+        if hasattr(embedder, 'embed_documents') and 'batch_size' in embedder.embed_documents.__code__.co_varnames:
+            embeddings = embedder.embed_documents(texts, batch_size=batch_size)
+        else:
+            embeddings = embedder.embed_documents(texts)
         
         # Create records for vector store
         records = []
