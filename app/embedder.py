@@ -1,7 +1,7 @@
 import os
 import logging
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -106,13 +106,14 @@ def get_embedding_model() -> Embeddings:
         logger.error(f"Error getting embedding model: {str(e)}")
         raise
 
-def embed_texts(documents: List[Document], embedder: Embeddings = None, batch_size: int = 100) -> List[Dict[str, Any]]:
+def embed_texts(documents: List[Document], embedder: Embeddings = None, batch_size: int = 100, upload_batch_size: Optional[int] = None) -> List[Dict[str, Any]]:
     """Create embeddings for a list of documents and store them in Pinecone.
     
     Args:
         documents: List of Document objects with text and metadata
         embedder: Optional embedder model (will create one if not provided)
-        batch_size: Number of documents to process in each batch
+        batch_size: Number of documents to process in each embedding batch
+        upload_batch_size: Number of documents to upload to Pinecone in each batch (auto-calculated if None)
         
     Returns:
         List of dictionaries with id, embedding, and metadata
@@ -128,7 +129,8 @@ def embed_texts(documents: List[Document], embedder: Embeddings = None, batch_si
             
         # Extract text from documents
         texts = [doc.page_content for doc in documents]
-        logger.info(f"Creating embeddings for {len(texts)} documents with batch size {batch_size}")
+        upload_msg = f"upload batch size {upload_batch_size}" if upload_batch_size else "auto-calculated upload batch size"
+        logger.info(f"Creating embeddings for {len(texts)} documents with embedding batch size {batch_size}, {upload_msg}")
         
         # Generate embeddings with batching
         if hasattr(embedder, 'embed_documents') and 'batch_size' in embedder.embed_documents.__code__.co_varnames:
@@ -151,8 +153,8 @@ def embed_texts(documents: List[Document], embedder: Embeddings = None, batch_si
         # Import here to avoid circular imports
         from app.vectordb import create_vector_store
         
-        # Create vector store with embedded documents
-        create_vector_store(documents)
+        # Create vector store with embedded documents using optimal upload batches
+        create_vector_store(documents, batch_size=upload_batch_size)
         
         return records
     except Exception as e:

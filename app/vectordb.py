@@ -4,6 +4,8 @@ from typing import List, Optional, Dict, Any
 from langchain_pinecone import PineconeVectorStore as LangchainPinecone
 from langchain_core.documents import Document
 import pinecone
+import time
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -15,10 +17,74 @@ PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 PINECONE_ENVIRONMENT = os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter")
 PINECONE_INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "webbot-index")
 PINECONE_DIMENSION = 1024  # Match the embedding dimensions
+PINECONE_MAX_PAYLOAD_SIZE = 4 * 1024 * 1024  # 4MB limit
 
 # Flag to track if Pinecone has been initialized
 pinecone_initialized = False
 pinecone_client = None
+
+def estimate_payload_size(documents: List[Document]) -> int:
+    """Estimate the payload size for a batch of documents.
+    
+    Args:
+        documents: List of Document objects
+        
+    Returns:
+        Estimated payload size in bytes
+    """
+    total_size = 0
+    
+    for doc in documents:
+        # Estimate size of document content
+        content_size = len(doc.page_content.encode('utf-8'))
+        
+        # Estimate size of metadata (rough approximation)
+        metadata_size = 0
+        if hasattr(doc, 'metadata') and doc.metadata:
+            for key, value in doc.metadata.items():
+                metadata_size += len(str(key).encode('utf-8'))
+                metadata_size += len(str(value).encode('utf-8'))
+        
+        # Add embedding size (1024 floats * 4 bytes each = 4096 bytes)
+        embedding_size = PINECONE_DIMENSION * 4
+        
+        # Add some overhead for JSON structure
+        overhead = 200  # Estimated JSON overhead per document
+        
+        doc_size = content_size + metadata_size + embedding_size + overhead
+        total_size += doc_size
+    
+    return total_size
+
+def get_optimal_batch_size(documents: List[Document], max_payload_size: int = PINECONE_MAX_PAYLOAD_SIZE) -> int:
+    """Calculate optimal batch size to stay under payload limit.
+    
+    Args:
+        documents: List of Document objects
+        max_payload_size: Maximum payload size in bytes
+        
+    Returns:
+        Optimal batch size
+    """
+    if not documents:
+        return 50  # Default batch size
+    
+    # Estimate average document size from first few documents
+    sample_size = min(5, len(documents))
+    sample_docs = documents[:sample_size]
+    estimated_size = estimate_payload_size(sample_docs)
+    avg_doc_size = estimated_size / sample_size
+    
+    # Calculate optimal batch size with safety margin (80% of limit)
+    safe_limit = int(max_payload_size * 0.8)
+    optimal_batch_size = max(1, int(safe_limit / avg_doc_size))
+    
+    # Cap at reasonable limits
+    optimal_batch_size = min(optimal_batch_size, 100)  # Never exceed 100 docs
+    optimal_batch_size = max(optimal_batch_size, 5)    # Never go below 5 docs
+    
+    logger.info(f"Estimated avg doc size: {avg_doc_size:.0f} bytes, optimal batch size: {optimal_batch_size}")
+    return optimal_batch_size
 
 def init_pinecone():
     """Initialize Pinecone client."""
@@ -157,11 +223,12 @@ def delete_vectors_by_source(source_url: str) -> bool:
     """
     return delete_vectors_by_filter({"source": source_url})
 
-def create_vector_store(documents: List[Document]):
-    """Create a vector store from documents.
+def create_vector_store(documents: List[Document], batch_size: Optional[int] = None):
+    """Create a vector store from documents with batched uploads to avoid payload size limits.
     
     Args:
         documents: List of Document objects with text and metadata
+        batch_size: Number of documents to upload in each batch (auto-calculated if None)
         
     Returns:
         A vector store object
@@ -174,17 +241,65 @@ def create_vector_store(documents: List[Document]):
         from app.embedder import get_embedding_model
         embedder = get_embedding_model()
         
-        logger.info(f"Creating vector store with {len(documents)} documents")
+        # Calculate optimal batch size if not provided
+        if batch_size is None:
+            batch_size = get_optimal_batch_size(documents)
         
-        # Create and return the vector store
-        vector_store = LangchainPinecone.from_documents(
-            documents=documents,
-            embedding=embedder,
-            index_name=PINECONE_INDEX_NAME
+        logger.info(f"Creating vector store with {len(documents)} documents using batch size {batch_size}")
+        
+        # Create vector store instance first
+        vector_store = LangchainPinecone.from_existing_index(
+            index_name=PINECONE_INDEX_NAME,
+            embedding=embedder
         )
         
-        logger.info("Successfully created vector store")
+        # Upload documents in batches to avoid payload size limits
+        total_batches = (len(documents) + batch_size - 1) // batch_size
+        
+        for i in range(0, len(documents), batch_size):
+            batch_docs = documents[i:i + batch_size]
+            batch_num = (i // batch_size) + 1
+            
+            # Estimate payload size for this batch
+            estimated_size = estimate_payload_size(batch_docs)
+            size_mb = estimated_size / (1024 * 1024)
+            
+            logger.info(f"Uploading batch {batch_num}/{total_batches} ({len(batch_docs)} documents, ~{size_mb:.1f}MB)")
+            
+            # Warn if approaching payload limit
+            if estimated_size > PINECONE_MAX_PAYLOAD_SIZE * 0.9:
+                logger.warning(f"Batch {batch_num} estimated size ({size_mb:.1f}MB) approaching Pinecone limit (4MB)")
+            
+            try:
+                # Add documents to existing vector store in batches
+                vector_store.add_documents(batch_docs)
+                logger.info(f"Successfully uploaded batch {batch_num}/{total_batches}")
+                
+                # Small delay between batches to be respectful to the API
+                if batch_num < total_batches:
+                    time.sleep(0.5)
+                    
+            except Exception as batch_error:
+                logger.error(f"Error uploading batch {batch_num}: {str(batch_error)}")
+                
+                # If this batch fails, try with smaller batch size
+                if len(batch_docs) > 10:
+                    logger.info(f"Retrying batch {batch_num} with smaller chunks (10 documents)")
+                    for j in range(0, len(batch_docs), 10):
+                        small_batch = batch_docs[j:j + 10]
+                        try:
+                            vector_store.add_documents(small_batch)
+                            logger.info(f"Successfully uploaded small batch {j//10 + 1} from batch {batch_num}")
+                        except Exception as small_batch_error:
+                            logger.error(f"Failed to upload small batch: {str(small_batch_error)}")
+                            # Continue with next small batch
+                else:
+                    logger.error(f"Failed to upload batch {batch_num} even with small size")
+                    # Continue with next batch
+        
+        logger.info("Successfully created vector store with batched uploads")
         return vector_store
+        
     except Exception as e:
         logger.error(f"Error creating vector store: {str(e)}")
         raise

@@ -371,9 +371,9 @@ def process_2wrap_comprehensive(request: ComprehensiveRequest):
         
         logger.info(f"Created {len(all_chunks)} enhanced chunks from 2wrap.com content")
         
-        # Step 3: Get embeddings and store in vector DB with batching
+        # Step 3: Get embeddings and store in vector DB with auto-calculated optimal batch sizes
         embedder = get_embedding_model()
-        embed_texts(all_chunks, embedder, batch_size=50)  # Smaller batches for stability
+        embed_texts(all_chunks, embedder, batch_size=50)  # Auto-calculates optimal upload batch size
         
         processing_time = time.time() - start_time
         logger.info(f"Comprehensive 2wrap.com processing completed in {processing_time:.2f} seconds")
@@ -444,9 +444,9 @@ def process_website(request: WebsiteRequest):
         
         logger.info(f"Created {len(all_chunks)} chunks from website content")
         
-        # Step 3: Get embeddings and store in vector DB
+        # Step 3: Get embeddings and store in vector DB with auto-calculated optimal batch sizes
         embedder = get_embedding_model()
-        embed_texts(all_chunks, embedder)
+        embed_texts(all_chunks, embedder, batch_size=50)  # Auto-calculates optimal upload batch size
         
         processing_time = time.time() - start_time
         logger.info(f"Website processing completed in {processing_time:.2f} seconds")
