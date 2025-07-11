@@ -280,3 +280,160 @@ def get_vector_store_with_score_threshold(score_threshold: float = 0.7, k: int =
     except Exception as e:
         logger.error(f"Error getting score-threshold retriever: {str(e)}")
         raise
+
+def get_existing_sources() -> List[str]:
+    """Get all source URLs currently stored in the vector store.
+    
+    Returns:
+        List of source URLs that already exist in the vector store
+    """
+    try:
+        # Ensure Pinecone is initialized
+        if not pinecone_initialized:
+            init_pinecone()
+        
+        logger.info("Retrieving existing sources from vector store")
+        
+        # Get the index
+        if pinecone_client:
+            # New API
+            index = pinecone_client.Index(PINECONE_INDEX_NAME)
+        else:
+            # Old API
+            index = pinecone.Index(PINECONE_INDEX_NAME)
+        
+        # Query with a dummy vector to get some results and extract metadata
+        dummy_vector = [0.0] * PINECONE_DIMENSION
+        
+        # Get a sample of vectors to extract sources
+        query_response = index.query(
+            vector=dummy_vector,
+            top_k=1000,  # Get up to 1000 results to capture most sources
+            include_metadata=True
+        )
+        
+        sources = set()
+        for match in query_response.matches:
+            if match.metadata and 'source' in match.metadata:
+                sources.add(match.metadata['source'])
+        
+        source_list = list(sources)
+        logger.info(f"Found {len(source_list)} unique sources in vector store")
+        return source_list
+        
+    except Exception as e:
+        logger.warning(f"Error retrieving existing sources: {str(e)}")
+        return []
+
+def check_source_exists(source_url: str) -> bool:
+    """Check if a specific source URL exists in the vector store.
+    
+    Args:
+        source_url: The source URL to check
+        
+    Returns:
+        True if the source exists, False otherwise
+    """
+    try:
+        # Ensure Pinecone is initialized
+        if not pinecone_initialized:
+            init_pinecone()
+        
+        from app.embedder import get_embedding_model
+        embedder = get_embedding_model()
+        
+        # Create vector store from existing index
+        vector_store = LangchainPinecone.from_existing_index(
+            index_name=PINECONE_INDEX_NAME,
+            embedding=embedder
+        )
+        
+        # Search for documents with this specific source
+        retriever = vector_store.as_retriever(
+            search_type="similarity",
+            search_kwargs={
+                "k": 1,
+                "filter": {"source": source_url}
+            }
+        )
+        
+        # Try to retrieve documents from this source
+        results = retriever.get_relevant_documents("test query")
+        exists = len(results) > 0
+        
+        logger.debug(f"Source {source_url} {'exists' if exists else 'does not exist'} in vector store")
+        return exists
+        
+    except Exception as e:
+        logger.debug(f"Error checking if source exists: {str(e)}")
+        return False
+
+def get_vector_store_stats() -> Dict[str, Any]:
+    """Get statistics about the current vector store content.
+    
+    Returns:
+        Dictionary with statistics about the vector store
+    """
+    try:
+        # Ensure Pinecone is initialized
+        if not pinecone_initialized:
+            init_pinecone()
+        
+        # Get the index
+        if pinecone_client:
+            # New API
+            index = pinecone_client.Index(PINECONE_INDEX_NAME)
+        else:
+            # Old API
+            index = pinecone.Index(PINECONE_INDEX_NAME)
+        
+        # Get index stats
+        stats = index.describe_index_stats()
+        
+        # Get existing sources
+        existing_sources = get_existing_sources()
+        
+        # Count by content type if possible
+        content_types = {}
+        service_types = {}
+        
+        # Sample some vectors to analyze metadata
+        dummy_vector = [0.0] * PINECONE_DIMENSION
+        query_response = index.query(
+            vector=dummy_vector,
+            top_k=500,  # Sample 500 vectors
+            include_metadata=True
+        )
+        
+        for match in query_response.matches:
+            if match.metadata:
+                # Count content types
+                content_type = match.metadata.get('content_type', 'unknown')
+                content_types[content_type] = content_types.get(content_type, 0) + 1
+                
+                # Count service types
+                service_list = match.metadata.get('service_types', [])
+                if isinstance(service_list, list):
+                    for service in service_list:
+                        service_types[service] = service_types.get(service, 0) + 1
+        
+        return {
+            "total_vectors": stats.total_vector_count,
+            "unique_sources": len(existing_sources),
+            "sources": existing_sources,
+            "content_types": content_types,
+            "service_types": service_types,
+            "index_fullness": stats.index_fullness if hasattr(stats, 'index_fullness') else 0.0
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting vector store stats: {str(e)}")
+        return {
+            "total_vectors": 0,
+            "unique_sources": 0,
+            "sources": [],
+            "content_types": {},
+            "service_types": {},
+            "index_fullness": 0.0,
+            "error": str(e)
+        }

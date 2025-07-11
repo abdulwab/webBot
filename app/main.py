@@ -7,7 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 
-from app.vectordb import get_vector_store_retriever, init_pinecone, delete_all_vectors
+from app.vectordb import (
+    get_vector_store_retriever, init_pinecone, delete_all_vectors, 
+    get_existing_sources, check_source_exists, get_vector_store_stats, delete_vectors_by_source
+)
 from app.chatbot import generate_answer
 from app.scraper import scrape_website, scrape_single_page
 from app.chunker import chunk_text
@@ -71,11 +74,33 @@ TWRAP_IMPORTANT_URLS = [
     "https://2wrap.com/hours/"
 ]
 
-def scrape_comprehensive_2wrap() -> Dict[str, str]:
+def scrape_comprehensive_2wrap(skip_existing: bool = True, update_existing: List[str] = None) -> Dict[str, str]:
     """
     Comprehensive scraping of 2wrap.com using both automatic discovery and hardcoded URLs
+    
+    Args:
+        skip_existing: If True, skip URLs that already exist in vector store
+        update_existing: List of specific URLs to update even if they exist
     """
     logger.info("Starting comprehensive scraping of 2wrap.com")
+    
+    # Get existing sources from vector store if skip_existing is True
+    existing_sources = []
+    if skip_existing:
+        logger.info("Checking existing sources in vector store...")
+        existing_sources = get_existing_sources()
+        logger.info(f"Found {len(existing_sources)} existing sources in vector store")
+        
+        # If update_existing is provided, remove those from existing_sources so they get re-scraped
+        if update_existing:
+            logger.info(f"Will update {len(update_existing)} specific sources even though they exist")
+            for url in update_existing:
+                if url in existing_sources:
+                    existing_sources.remove(url)
+                    # Delete old vectors for this source
+                    delete_vectors_by_source(url)
+                    logger.info(f"Deleted existing vectors for {url}")
+    
     all_scraped_content = {}
     
     headers = {
@@ -92,16 +117,34 @@ def scrape_comprehensive_2wrap() -> Dict[str, str]:
             max_pages=50,  # Much higher limit
             max_depth=3    # Deeper crawling
         )
+        
+        # Filter out existing sources if skip_existing is True
+        if skip_existing:
+            filtered_scraped = {}
+            for url, content in auto_scraped.items():
+                if url not in existing_sources:
+                    filtered_scraped[url] = content
+                else:
+                    logger.info(f"Skipping existing source: {url}")
+            auto_scraped = filtered_scraped
+        
         all_scraped_content.update(auto_scraped)
-        logger.info(f"Automatic discovery found {len(auto_scraped)} pages")
+        logger.info(f"Automatic discovery found {len(auto_scraped)} new pages")
     except Exception as e:
         logger.warning(f"Automatic discovery failed: {str(e)}, continuing with hardcoded URLs")
     
     # Second, scrape hardcoded important URLs
     logger.info("Step 2: Scraping hardcoded important URLs")
     scraped_hardcoded = 0
+    skipped_existing = 0
     
     for url in TWRAP_IMPORTANT_URLS:
+        # Skip if already exists and not in update list
+        if skip_existing and url in existing_sources and (not update_existing or url not in update_existing):
+            logger.debug(f"Skipping existing hardcoded URL: {url}")
+            skipped_existing += 1
+            continue
+            
         if url not in all_scraped_content:
             try:
                 logger.info(f"Scraping hardcoded URL: {url}")
@@ -116,10 +159,15 @@ def scrape_comprehensive_2wrap() -> Dict[str, str]:
                 logger.debug(f"Failed to scrape hardcoded URL {url}: {str(e)}")
     
     logger.info(f"Hardcoded URL scraping added {scraped_hardcoded} new pages")
+    logger.info(f"Skipped {skipped_existing} existing hardcoded URLs")
     logger.info(f"Total comprehensive scraping result: {len(all_scraped_content)} pages")
     
     if not all_scraped_content:
-        raise ValueError("Comprehensive scraping failed to retrieve any content")
+        if skip_existing and existing_sources:
+            logger.info("No new content to scrape - all sources already exist in vector store")
+            return {}
+        else:
+            raise ValueError("Comprehensive scraping failed to retrieve any content")
     
     return all_scraped_content
 
@@ -178,6 +226,8 @@ class WebsiteRequest(BaseModel):
 
 class ComprehensiveRequest(BaseModel):
     force_refresh: Optional[bool] = False  # Option to clear existing data
+    skip_existing: Optional[bool] = True   # Skip URLs already in vector store
+    update_sources: Optional[List[str]] = None  # Specific URLs to update
 
 class QueryRequest(BaseModel):
     query: str
@@ -210,26 +260,63 @@ def get_status():
     
     has_data = global_retriever is not None
     
+    # Get basic vector store stats
+    try:
+        vector_stats = get_vector_store_stats()
+        vector_info = {
+            "total_sources": vector_stats["unique_sources"],
+            "total_vectors": vector_stats["total_vectors"],
+            "has_content": vector_stats["unique_sources"] > 0
+        }
+    except Exception:
+        vector_info = {
+            "total_sources": 0,
+            "total_vectors": 0,
+            "has_content": False
+        }
+    
     return {
         "status": "active",
         "has_vector_data": has_data,
+        "vector_store": vector_info,
         "instructions": {
-            "step_1": "Run POST /process-2wrap-comprehensive to scrape ALL content from 2wrap.com",
+            "step_1": "Run POST /process-2wrap-comprehensive to scrape content from 2wrap.com (smart - skips existing)",
             "step_2": "Use POST /query to ask questions - the bot responds as 2wrap in first person",
-            "note": "The comprehensive endpoint scrapes 50+ pages including all services, pricing, colors, etc."
+            "note": "The system automatically skips already-scraped pages for efficiency"
         },
         "endpoints": {
-            "/process-2wrap-comprehensive": "Scrapes ALL 2wrap.com content (recommended)",
+            "/process-2wrap-comprehensive": "Smart scraping - only processes new/updated content",
+            "/vector-stats": "Detailed vector store statistics and content analysis",
             "/process-website": "Scrapes any website with custom limits",
             "/query": "Ask questions - responds as 2wrap",
             "/status": "This endpoint"
         }
     }
 
+@app.get("/vector-stats")
+def get_vector_stats():
+    """Get comprehensive statistics about the vector store content"""
+    try:
+        stats = get_vector_store_stats()
+        return {
+            "status": "success",
+            "vector_store_stats": stats,
+            "recommendations": {
+                "total_sources": f"Currently storing {stats['unique_sources']} unique web pages",
+                "content_coverage": f"Found content types: {list(stats['content_types'].keys())}",
+                "service_coverage": f"Detected services: {list(stats['service_types'].keys())}" if stats['service_types'] else "No service-specific content detected",
+                "next_action": "Run /process-2wrap-comprehensive to add more content" if stats['unique_sources'] < 20 else "Vector store has good coverage"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting vector stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving vector store statistics: {str(e)}")
+
 @app.post("/process-2wrap-comprehensive", response_model=WebsiteResponse)
 def process_2wrap_comprehensive(request: ComprehensiveRequest):
     """
     Comprehensive processing of 2wrap.com with all services, pricing, colors, and content
+    Enhanced with smart detection of existing content
     """
     try:
         start_time = time.time()
@@ -249,14 +336,29 @@ def process_2wrap_comprehensive(request: ComprehensiveRequest):
         if request.force_refresh:
             logger.info("Force refresh requested - clearing existing vector data")
             delete_all_vectors()
+            skip_existing = False  # Don't skip anything since we cleared everything
+        else:
+            skip_existing = request.skip_existing
         
-        # Step 1: Comprehensive scraping of 2wrap.com
-        scraped_pages = scrape_comprehensive_2wrap()
+        # Step 1: Comprehensive scraping of 2wrap.com with smart duplicate detection
+        scraped_pages = scrape_comprehensive_2wrap(
+            skip_existing=skip_existing,
+            update_existing=request.update_sources
+        )
         
         if not scraped_pages:
-            raise HTTPException(status_code=400, detail="Failed to scrape 2wrap.com content")
+            # Check if we have existing content
+            existing_stats = get_vector_store_stats()
+            if existing_stats['unique_sources'] > 0:
+                return {
+                    "message": f"No new content to process - all {existing_stats['unique_sources']} sources already exist in vector store. Use force_refresh=true to rebuild everything.",
+                    "pages_processed": 0,
+                    "chunks_created": 0
+                }
+            else:
+                raise HTTPException(status_code=400, detail="Failed to scrape 2wrap.com content")
         
-        logger.info(f"Successfully scraped {len(scraped_pages)} pages from 2wrap.com")
+        logger.info(f"Successfully scraped {len(scraped_pages)} new/updated pages from 2wrap.com")
         
         # Step 2: Chunk the text from all pages with enhanced metadata
         all_chunks = []
@@ -276,6 +378,9 @@ def process_2wrap_comprehensive(request: ComprehensiveRequest):
         processing_time = time.time() - start_time
         logger.info(f"Comprehensive 2wrap.com processing completed in {processing_time:.2f} seconds")
         
+        # Get final stats
+        final_stats = get_vector_store_stats()
+        
         # Reinitialize the global retriever after adding new data
         global global_retriever
         try:
@@ -286,7 +391,7 @@ def process_2wrap_comprehensive(request: ComprehensiveRequest):
             # Continue even if retriever reinitialization fails
         
         return {
-            "message": f"Successfully processed comprehensive 2wrap.com content with all services, pricing, and details",
+            "message": f"Successfully processed {len(scraped_pages)} pages from 2wrap.com. Total sources in vector store: {final_stats['unique_sources']}",
             "pages_processed": len(scraped_pages),
             "chunks_created": len(all_chunks)
         }
