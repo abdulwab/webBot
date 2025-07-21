@@ -193,11 +193,7 @@ def generate_answer(query, retriever, confidence_threshold: float = DEFAULT_CONF
             
             # Return a response indicating low confidence
             sources_str = format_sources(docs_with_scores)
-            return f"""I apologize, but I don't have enough detailed information in our system to answer your question accurately right now. 
-
-The information I found doesn't seem closely related to your specific question (confidence below {confidence_threshold:.1%}). Could you try rephrasing your question or asking about something more specific to our car wrapping and detailing services?
-
-We'd be happy to help you with information about our services, pricing, or company details. Please feel free to ask a more specific question, or contact us directly for personalized assistance.{sources_str}
+            return f"""I don't have enough information to answer your question accurately. Could you try rephrasing or ask about our specific services? Contact us directly for personalized assistance.{sources_str}
 
 **Confidence Score:** {confidence_metrics['overall_confidence']:.1%}"""
         
@@ -219,31 +215,27 @@ We'd be happy to help you with information about our services, pricing, or compa
         # Step 2: Generate answer using LLM with enhanced context
         logger.info("RAG Step 2: Generating answer using LLM with enhanced context")
         
-        prompt = f"""You are the AI assistant for 2wrap.com, speaking directly as 2wrap - a car wrapping and detailing company. You must respond in FIRST PERSON as if you ARE 2wrap talking to a potential customer.
+        prompt = f"""You are 2wrap.com's AI assistant. Respond as 2wrap in FIRST PERSON.
 
-CONTEXT FROM OUR WEBSITE (2wrap.com):
+CONTEXT FROM OUR WEBSITE:
 {context}
 
 CUSTOMER QUESTION:
 {query}
 
-STRICT INSTRUCTIONS:
-1. Respond in FIRST PERSON as 2wrap (use "we", "our", "us", "I" - never "they" or "2wrap")
-2. Answer ONLY based on the information provided in our website context above
-3. If the context doesn't contain enough information to answer fully, clearly state what information is missing and invite them to contact us
-4. Always speak as 2wrap directly - "We offer...", "Our services include...", "We specialize in..."
-5. Include specific details from our context when relevant (our prices, our services, our processes, etc.)
-6. Be conversational and helpful, representing 2wrap's voice and personality
-7. DO NOT use general knowledge about car wrapping or detailing that isn't in our context
-8. If you cannot answer based on our context, say so clearly and provide our contact information
-9. Always maintain the perspective that you are speaking FOR 2wrap TO the customer
+RESPONSE REQUIREMENTS:
+1. Answer in FIRST PERSON as 2wrap (use "we", "our", "us")
+2. Keep responses SHORT and DIRECT (2-4 sentences max)
+3. Answer ONLY from our website context
+4. Be conversational but professional
+5. If information is missing, say so briefly and suggest contacting us
+6. Focus on key points, not lengthy explanations
 
 RESPONSE STYLE:
-- Speak directly as 2wrap: "We provide...", "Our team...", "At 2wrap, we..."
-- Be professional but friendly and approachable
-- Show enthusiasm about our services
-- Make the customer feel welcomed and valued
-- Reference specific capabilities, pricing, or processes from our context
+- Direct and concise: "We offer...", "Our prices range from...", "We can wrap..."
+- Professional but friendly
+- 2-4 sentences maximum
+- No lengthy explanations unless absolutely necessary
 
 YOUR RESPONSE AS 2WRAP:"""
         
@@ -256,7 +248,7 @@ YOUR RESPONSE AS 2WRAP:"""
         
         # Add source references and confidence information
         sources_str = format_sources(top_docs)
-        confidence_str = f"\n\n**Confidence Score:** {confidence_metrics['overall_confidence']:.1%} (based on {confidence_metrics['high_confidence_docs']} high-confidence sources)"
+        confidence_str = f"\n\n**Confidence Score:** {confidence_metrics['overall_confidence']:.1%}"
         
         final_answer = f"{response}{sources_str}{confidence_str}"
         
