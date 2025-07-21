@@ -3,7 +3,6 @@ from langchain_core.documents import Document
 import logging
 import re
 from typing import List, Optional, Dict, Any
-from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
