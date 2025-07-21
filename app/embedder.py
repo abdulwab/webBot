@@ -1,6 +1,5 @@
 import os
 import logging
-import numpy as np
 from typing import List, Dict, Any, Optional
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
